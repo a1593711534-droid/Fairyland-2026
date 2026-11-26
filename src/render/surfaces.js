@@ -9,7 +9,10 @@ const surface = [
   [/^Soft lichen/, 'soil', .36],
   [/(bark|Oil-rubbed rowan)$/, 'bark', .71],
   [/^(Midnight wool|Russet velvet|Faded ochre linen)/, 'cloth', .52],
-  [/^(Oiled leather|Coat)/, 'hide', .54],
+  [/^Oiled leather/, 'hide', .54],
+  [/^Coat scales/, 'scales', .39, false, true],
+  [/^Coat fur/, 'fur', .33, false, true],
+  [/^Coat plume/, 'plume', .36, false, true],
 ]
 
 function texture(name, component) {
@@ -33,8 +36,8 @@ export async function applySurfaces(scene) {
     for (const material of [object.material].flat()) {
       const match = surface.find(([pattern]) => pattern.test(material.name))
       if (!match || applied.has(material)) continue
-      const [, name, bump, rough] = match
-      const colors = name === 'hide' && material.name.startsWith('Coat') ? Promise.resolve(null) : texture(name, 'color')
+      const [, name, bump, rough, normalOnly] = match
+      const colors = normalOnly ? null : texture(name, 'color')
       applied.set(material, Promise.all([colors, texture(name, 'normal'), rough ? texture(name, 'rough') : null])
         .then(([color, normal, roughness]) => {
           if (color) material.map = color

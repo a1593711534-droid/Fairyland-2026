@@ -26,7 +26,6 @@ let targetMode = 'move'
 let pendingSummon = null
 let placementPlan = []
 let commandMenu = false
-let pendingMove = null
 let shopTarget = 'hero'
 let worldPoint = null
 let busy = false
@@ -90,7 +89,6 @@ function setScene(next) {
   targetMode = 'move'
   commandMenu = false
   placementPlan = []
-  pendingMove = null
   pendingSummon = null
   hoverRouter = null
   if (next !== 'menu' && !stage) {
@@ -213,8 +211,7 @@ function renderBattle() {
     b.events.filter(event => event.type === 'text').slice(-3).map(event => '<div>' + event.text + '</div>').join('') + '</div>' +
     '<footer class="battle-footer">' + card(actor) +
     '<div class="battle-caption">' + hint() + '</div>' +
-    (pendingMove ? button('確認移動', 'confirm-move', { css: 'primary end-turn' }) :
-      targetMode !== 'move' ? button('返回', 'cancel-target', { css: 'subtle end-turn', disabled: busy }) :
+    (targetMode !== 'move' ? button('返回', 'cancel-target', { css: 'subtle end-turn', disabled: busy }) :
       button(commandMenu ? '收起指令' : '指令', 'commands', { css: 'primary end-turn', disabled: !canAct })) +
     '</footer></section>'
   const spell = skills[skillFor(actor)]
@@ -242,8 +239,7 @@ function renderBattle() {
 
 function hint() {
   if (busy) return '行動結算中'
-  if (pendingMove) return '路徑已選擇。按確認移動，或點另一個位置重新規劃。'
-  if (targetMode === 'move') return '青色是可達範圍。點地面規劃路徑，點角色開啟指令。'
+  if (targetMode === 'move') return '青色區域可直接點擊移動。游標可預覽路線，金色路線會引發借機攻擊。'
   if (targetMode === 'summon') return '藍紫色是召喚範圍。點空地放置虛影。'
   if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) return '選擇法術中心。範圍內的我方也可能受到傷害。'
   if (targetMode === 'capture') return '選擇野生精靈。降低血量或施加異常可提高成功率。'
@@ -306,7 +302,7 @@ function renderModal() {
   }
   if (modal === 'help') {
     title = '玩法說明'
-    body = '<div class="guide"><h3>移動與行動</h3><p>選擇角色後，青色區域會標出可走範圍。滑鼠移到地面可預覽繞路，紅線表示超出剩餘距離。點選攻擊或法術後，再點目標。行動與移動距離分開計算，待機才交給下一位。離開敵人的近戰範圍會引來借機攻擊，可先用主要行動脫離。</p>' +
+    body = '<div class="guide"><h3>移動與行動</h3><p>選擇角色後，點青色區域即可移動。滑鼠移到地面可預覽繞路，紅線表示超出剩餘距離。點選攻擊或法術後，再點目標。行動與移動距離分開計算，待機才交給下一位。離開敵人的近戰範圍會引來借機攻擊，可先用主要行動脫離。</p>' +
       '<h3>召喚與收服</h3><p>莉歐開局就有六種屬性的夥伴，進場時會獨自站在戰場上。她可在同一回合耗魔召喚多隻夥伴。魔力低於 ' + rules.tetherMana +
       ' 時，場上夥伴會變回野生。野生精靈生命愈低、異常愈多，收服機率愈高。回到月泉可回復生命與魔力。</p>' +
       '<h3>屬性與進化</h3><p>水克火、火克冰、冰克風、風克地、地克雷、雷克水。同屬性施法有加成，莉歐召喚火屬性精靈也有加成。召喚上場的夥伴可獲經驗，Lv. ' +
@@ -432,12 +428,13 @@ function projectTags(renderer) {
       continue
     }
     const u = tag.dataset.unit && unitById(game.battle, tag.dataset.unit)
-    const pivot = u && renderer.units.get(u.id)?.pivot.position
+    const body = u && renderer.units.get(u.id)?.pivot
+    const pivot = body?.position
     const node = waypoints[tag.dataset.node]
     if (!pivot && !node) continue
     const at = renderer.project(pivot ?? node, node ? .38 : u.kind === 'hero' || u.kind === 'rival' ? 2.65 : u.evolved ? 2.85 : 2.05)
     tag.style.transform = 'translate(' + at.x.toFixed(1) + 'px,' + at.y.toFixed(1) + 'px) translate(-50%,-100%)'
-    tag.style.visibility = at.show ? 'visible' : 'hidden'
+    tag.style.visibility = at.show && body?.visible !== false ? 'visible' : 'hidden'
   }
 }
 
@@ -465,13 +462,13 @@ function refreshMarks() {
   const colors = { summon: '#abacff', attack: '#ff906f', skill: elements[elementOf(actor)].color, capture: '#efdc9e' }
   if (range) stage.mark(actor.pos, range, colors[overlayMode], true)
   for (const { at } of placementPlan) stage.mark(at, rules.bodyRadius * 1.5, colors.summon)
-  if (pendingMove) stageHover(pendingMove, true)
 }
 
-function stageHover(pos, lock = false) {
+function stageHover(pos) {
   if (!pos) {
     const label = document.querySelector('#preview')
-    if (label && !pendingMove) label.textContent = ''
+    if (label) label.textContent = ''
+    stage?.clearHover()
     return
   }
   if (busy || modal || scene !== 'battle' || game.battle.result) return
@@ -494,7 +491,7 @@ function stageHover(pos, lock = false) {
       : preview.problem
     return
   }
-  if (targetMode !== 'move' || pendingMove && !lock) return
+  if (targetMode !== 'move') return
   hoverRouter ??= router(actor.pos, movementBlocks(b.units.filter(u => !u.dismissed), actor))
   const path = hoverRouter(pos)
   const within = path && path.cost <= actor.movement + .00001
@@ -522,14 +519,11 @@ function stageHover(pos, lock = false) {
 }
 
 function stageClick(pos, unit) {
-  if (busy || modal) return
+  if (busy || modal || scene !== 'battle') return
   if (unit && targetMode !== 'summon') { clickUnit(unit); return }
   if (targetMode === 'move') {
-    const check = validate(game, { type: 'move', at: pos })
-    if (!check.ok) { notify(check.problem); return }
-    pendingMove = pos
-    commandMenu = false
-    render()
+    void playerAct({ type: 'move', at: pos })
+    return
   }
   if (targetMode === 'summon') {
     const next = [...placementPlan, { id: pendingSummon, at: pos }]
@@ -553,7 +547,7 @@ function clickUnit(id) {
     type: 'strike', target: id, at: unitById(game.battle, id).pos,
     skill: targetMode === 'attack' ? 'attack' : skillFor(active(game.battle)),
   })
-  else if (selectAlly(game.battle, id)) { hoverRouter = null; pendingMove = null; commandMenu = true; save(); render() }
+  else if (selectAlly(game.battle, id)) { hoverRouter = null; commandMenu = true; save(); render() }
   else {
     const u = unitById(game.battle, id)
     if (u) notify(titleOf(u) + ' · ' + turnName(u) + ' · 生命 ' + u.hp + ' / ' + stat(u, 'hp') +
@@ -611,12 +605,14 @@ async function animate(events) {
       stage.play(e.actor, 'summon')
       const arrivals = e.targets.map(id => unitById(game.battle, id))
       sound('cast', elementOf(arrivals[0]))
-      await wait(300)
-      if (!settings.reduced) for (const unit of arrivals) stage.effect(unit.pos, elementOf(unit), 'summon')
-      const ready = Promise.all(arrivals.map(async unit => {
-        await stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1, hidden: true })
-      }))
-      await Promise.all([ready, wait(300)])
+      const ready = Promise.all(arrivals.map(unit =>
+        stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1, hidden: true })))
+      await Promise.all([ready, wait(250)])
+      if (!settings.reduced) {
+        const cues = arrivals.map(unit => stage.effect(unit.pos, elementOf(unit), 'summon'))
+        if (arrivals.some(unit => elementOf(unit) === 'fire')) sound('fire-rise')
+        await Promise.all([wait(285), ...cues])
+      }
       for (const unit of arrivals) {
         stage.reveal(unit.id)
         stage.play(unit.id, 'appear')
@@ -675,7 +671,6 @@ async function playerAct(command) {
   busy = true
   targetMode = 'move'
   pendingSummon = null
-  pendingMove = null
   placementPlan = []
   commandMenu = false
   modal = ''
@@ -721,7 +716,6 @@ function cancelTarget() {
     placementPlan = []
     modal = ''
   }
-  pendingMove = null
   targetMode = 'move'
   commandMenu = false
   render()
@@ -768,12 +762,11 @@ app.addEventListener('click', event => {
   if (code === 'commands') { commandMenu = !commandMenu; render() }
   if (code === 'mode') { targetMode = value; commandMenu = false; render() }
   if (code === 'cancel-target') cancelTarget()
-  if (code === 'confirm-move' && pendingMove) void playerAct({ type: 'move', at: pendingMove })
   if (code === 'pick-summon') { modal = ''; commandMenu = false; pendingSummon = value; targetMode = 'summon'; render() }
   if (code === 'drop-summon') { placementPlan = placementPlan.filter(row => row.id !== value); render() }
   if (code === 'confirm-summons') void playerAct({ type: 'summon-batch', placements: placementPlan })
   if (code === 'select' && selectAlly(game.battle, value)) {
-    hoverRouter = null; targetMode = 'move'; pendingMove = null; commandMenu = true; save(); render()
+    hoverRouter = null; targetMode = 'move'; commandMenu = true; save(); render()
   }
   if (code === 'unit') clickUnit(value)
   if (['recall', 'end', 'disengage', 'rush'].includes(code)) void playerAct({ type: code })
@@ -834,15 +827,14 @@ dialog.addEventListener('input', event => {
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !busy) {
     if (modal === 'result') return
-    if (modal === 'summons' || scene === 'battle' && !modal && (targetMode !== 'move' || pendingMove || commandMenu)) cancelTarget()
+    if (modal === 'summons' || scene === 'battle' && !modal && (targetMode !== 'move' || commandMenu)) cancelTarget()
     else if (modal) { modal = ''; renderModal() }
     else if (scene !== 'menu') { modal = 'pause'; renderModal() }
   }
   if (event.code === 'Space' && !event.repeat && !modal && scene === 'battle' &&
       !['BUTTON', 'INPUT'].includes(document.activeElement?.tagName)) {
     event.preventDefault()
-    if (pendingMove) void playerAct({ type: 'move', at: pendingMove })
-    else if (targetMode === 'move') void playerAct({ type: 'end' })
+    if (targetMode === 'move') void playerAct({ type: 'end' })
   }
 })
 

@@ -5,6 +5,11 @@ import { elements } from '../src/game/content.js'
 
 const art = new URL('../public/art/', import.meta.url)
 
+async function modelJson(name) {
+  const file = await readFile(new URL(name + '.glb', art))
+  return JSON.parse(file.subarray(20, 20 + file.readUInt32LE(12)))
+}
+
 test('published meshes retain the UVs for dynamically loaded PBR textures', async () => {
   const required = {
     world: ['Meadow soil', 'Weathered slate', 'Alder bark', 'Faded ochre linen'],
@@ -13,14 +18,27 @@ test('published meshes retain the UVs for dynamically loaded PBR textures', asyn
     'turtle-evolved': ['Coat'],
   }
   for (const [name, materials] of Object.entries(required)) {
-    const file = await readFile(new URL(name + '.glb', art))
-    const model = JSON.parse(file.subarray(20, 20 + file.readUInt32LE(12)))
+    const model = await modelJson(name)
     const primitives = model.meshes.flatMap(mesh => mesh.primitives)
     for (const material of materials) {
       const withUVs = primitives.some(primitive =>
         model.materials[primitive.material].name.startsWith(material) &&
         primitive.attributes.TEXCOORD_0 !== undefined)
       assert.ok(withUVs, name + ' does not have UVs for ' + material)
+    }
+  }
+})
+
+test('the hero and all creature forms have rigged, vertex-painted inset eyes', async () => {
+  const creatures = ['turtle', 'dino', 'cat', 'bird', 'mouse', 'dog']
+  const models = ['hero', ...creatures.flatMap(name => [name, name + '-evolved'])]
+  for (const name of models) {
+    const model = await modelJson(name)
+    const eyes = model.meshes.flatMap(mesh => mesh.primitives).filter(primitive =>
+      model.materials[primitive.material].name === 'Inset cornea')
+    assert.ok(eyes.length > 0, name)
+    for (const { attributes } of eyes) {
+      assert.ok(attributes.COLOR_0 !== undefined && attributes.JOINTS_0 !== undefined, name)
     }
   }
 })

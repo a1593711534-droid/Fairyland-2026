@@ -111,8 +111,40 @@ export class FairylandAudio {
     }
   }
 
+  fireRise() {
+    const ctx = this.ctx
+    const now = ctx.currentTime + .01
+    const duration = 1.63
+    if (!this.fireNoise) {
+      this.fireNoise = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * duration), ctx.sampleRate)
+      const samples = this.fireNoise.getChannelData(0)
+      let wind = 0
+      for (let i = 0; i < samples.length; i++) {
+        const grain = Math.random() * 2 - 1
+        wind = wind * .90 + grain * .10
+        samples[i] = wind * 1.2 + grain * .12
+      }
+    }
+    const source = ctx.createBufferSource()
+    source.buffer = this.fireNoise
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(255, now)
+    filter.frequency.exponentialRampToValueAtTime(1570, now + .61)
+    filter.frequency.exponentialRampToValueAtTime(240, now + duration)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0, now)
+    gain.gain.linearRampToValueAtTime(.62, now + .49)
+    gain.gain.linearRampToValueAtTime(.37, now + .85)
+    gain.gain.linearRampToValueAtTime(0, now + duration)
+    source.connect(filter).connect(gain).connect(this.fx)
+    source.start(now)
+    source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect() }
+  }
+
   play(type = 'tap', element) {
     if (!this.ctx || !this.volume) return
+    if (type === 'fire-rise') { this.fireRise(); return }
     const effect = tones[type] ?? { notes: elements[element] ?? elements.fire, len: .42, power: .2 }
     for (const [index, pitch] of effect.notes.entries()) {
       this.note(pitch, this.ctx.currentTime + .013 + index * (type === 'evolve' ? .105 : .046),

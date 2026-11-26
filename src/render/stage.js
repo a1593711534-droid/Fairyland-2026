@@ -7,6 +7,7 @@ import { trailFX } from './effects.js'
 import { EffekseerStage } from './effekseer.js'
 import { applySurfaces, fireflies } from './surfaces.js'
 import { artURL } from './art-url.js'
+import { fireSummon, warmFire } from './fire-summon.js'
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
 const library = new Map()
@@ -31,13 +32,43 @@ const cloneUnit = data => ({
   ...data, scene: clone(data.scene),
 })
 
+function portraitFloor() {
+  const floor = new T.Mesh(new T.PlaneGeometry(9.2, 9.2), new T.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    vertexShader: /* glsl */ `
+      varying vec2 spot;
+      void main() {
+        spot = (uv-.5)*2.;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec2 spot;
+      void main() {
+        float r = dot(spot,spot);
+        float light = exp(-r*3.6)*(1.-smoothstep(.20,.96,r));
+        vec3 tint = mix(vec3(.081,.161,.170),vec3(.147,.179,.158),1.-abs(spot.x)*.6);
+        gl_FragColor = vec4(tint,light*.57);
+        #include <colorspace_fragment>
+      }
+    `,
+  }))
+  floor.rotation.x = -Math.PI / 2
+  floor.position.set(.78,.006,0)
+  floor.renderOrder = -1
+  return floor
+}
+
 export class Stage {
   constructor(host, callbacks) {
     this.host = host
     this.callbacks = callbacks
     this.scene = new T.Scene()
     this.scene.background = new T.Color('#193133')
-    this.scene.fog = new T.FogExp2('#345755', .0165)
+    this.forestFog = new T.FogExp2('#345755', .0165)
+    this.studio = portraitFloor()
+    this.scene.add(this.studio)
     this.camera = new T.OrthographicCamera(-1, 1, 1, -1, .1, 99)
     this.renderer = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     const gl = this.renderer.getContext()
@@ -65,6 +96,8 @@ export class Stage {
     const rim = this.rim = new T.DirectionalLight('#9dd7ee', 2.45)
     rim.position.set(9, 8, -15)
     this.scene.add(rim)
+    this.fireLights = Array.from({ length: 2 }, () => new T.PointLight('#ff741d', 0, 6.3, 1.75))
+    this.scene.add(...this.fireLights)
     this.units = new Map()
     this.actors = new T.Group()
     this.scene.add(this.actors)
@@ -89,7 +122,9 @@ export class Stage {
       this.scene.add(this.land)
       this.land.visible = ['world', 'battle'].includes(this.mode)
       this.land.traverse(object => {
-        if (object.isMesh) object.receiveShadow = true
+        if (!object.isMesh) return
+        object.receiveShadow = true
+        object.castShadow = /^(Weathered slate|Alder bark|Silver birch bark|Oil-rubbed rowan)/.test(object.material.name)
       })
     }).catch(error => callbacks.error(error))
     this.setMode('menu')
@@ -102,12 +137,21 @@ export class Stage {
     this.mode = mode
     this.effekseer.clear()
     if (mode === 'battle' || mode === 'inspect') void this.effekseer.warm()
+    if ((mode === 'world' || mode === 'battle') && !this.fireWarm) {
+      this.fireWarm = true
+      const idle = globalThis.requestIdleCallback ?? globalThis.requestAnimationFrame
+      idle(() => {
+        this.fireWarm = warmFire(this.renderer, this.scene, this.camera).catch(() => {})
+      })
+    }
     const landscape = mode === 'world' || mode === 'battle'
+    this.scene.fog = landscape ? this.forestFog : null
+    this.studio.visible = mode === 'choose' || mode === 'inspect'
     this.motes.visible = landscape
-    this.groundShadows.visible = landscape
-    this.ambient.intensity = landscape ? 2.18 : 2.55
-    this.key.intensity = landscape ? 2.64 : 3.1
-    this.rim.intensity = landscape ? 2.45 : 3.2
+    this.groundShadows.visible = mode !== 'menu'
+    this.ambient.intensity = landscape ? 2.18 : 1.95
+    this.key.intensity = landscape ? 2.64 : 3.48
+    this.rim.intensity = landscape ? 2.45 : 2.82
     for (const tick of this.effects) tick(Infinity)
     this.effects = []
     this.host.hidden = mode === 'menu'
@@ -451,6 +495,12 @@ export class Stage {
   }
 
   effect(point, element, type, towards, scale = 1) {
+    if (type === 'summon' && element === 'fire') {
+      const light = this.fireLights.find(light => !light.userData.fireBusy)
+      const fire = fireSummon(this.scene, point, light)
+      this.effects.push(fire.advance)
+      return fire.ready
+    }
     if (this.effekseer.play(type, element, point, towards, scale)) return
     this.effects.push(trailFX(this.scene, point, element, type, towards))
   }

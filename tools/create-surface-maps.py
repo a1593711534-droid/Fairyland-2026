@@ -63,3 +63,17 @@ if __name__=='__main__':
     paint('cloth',woven,(161,156,147),(250,244,226),2.0)
     grained=.38*mid+.33*fine+.26*detail
     paint('hide',grained,(122,101,82),(236,222,184),2.65)
+
+    column, row = x/math.tau, y/math.tau
+    rows = np.floor(row*16)
+    scale_x = (column*12 + .5*(rows%2))%1 - .5
+    scale_y = (row*16)%1
+    keel = np.sin(math.pi*scale_y)**.72 * np.cos(math.pi*scale_x)**1.7
+    rim = np.exp(-((scale_y-.22-.77*scale_x**2)/.065)**2)
+    write(normals(keel*.28-rim*.096 + fine*.038,3.4),'scales','normal',85)
+    nap = np.cos(x*94+.95*np.sin(y*7)+2.6*mid)
+    fine_nap = np.cos(x*143+np.sin(y*11)+1.6*fine)
+    write(normals(nap*.115+fine_nap*.039 + .07*mid,1.8),'fur','normal',84)
+    rachis = np.cos(x*22+.61*np.sin(y*5))
+    barbs = np.cos(y*66 + 2.6*abs(np.sin(x*22)) + .3*mid)
+    write(normals(rachis*.085 + barbs*.071 + .021*fine,1.86),'plume','normal',83)
