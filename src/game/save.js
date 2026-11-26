@@ -1,19 +1,20 @@
 import { hero, rules, species } from './content.js'
+import { inventory, startingInventory } from './inventory.js'
 
 export const slots = ['auto', '1', '2', '3']
 const prefix = 'fairyland-2026.'
-export const defaults = { reduced: false, labels: true, volume: .45 }
-const saveVersion = 2
+export const defaults = { reduced: false, labels: true, volume: .45, music: .55 }
+const saveVersion = 3
 
 function starterCollection() {
   return Object.entries(species).map(([kind, info]) => ({
-    id: 'starter-' + kind, kind, hp: info.hp, xp: 0, level: 1, evolved: false, statuses: {}, practice: false,
+    id: 'starter-' + kind, kind, hp: info.hp, xp: 0, level: 1, evolved: false, statuses: {}, inventory: startingInventory(kind), practice: false,
   }))
 }
 
 export const newGame = () => ({
-  world: 'camp', hero: { hp: hero.hp, mana: rules.playerMana, statuses: {} },
-  collection: starterCollection(), items: rules.itemCharges, wins: 0, serial: 1, battle: null,
+  world: 'camp', hero: { kind: 'hero', hp: hero.hp, mana: rules.playerMana, statuses: {}, inventory: startingInventory('hero') },
+  collection: starterCollection(), gold: rules.baseGold, cleared: {}, eventsSeen: {}, wins: 0, serial: 1, battle: null,
 })
 
 function load(key) {
@@ -24,11 +25,22 @@ function load(key) {
 export function readSlot(slot) {
   const entry = load(slot)
   const s = entry?.game
-  if (![1, saveVersion].includes(entry?.version) || !Number.isFinite(entry.at) || !Number.isFinite(s?.hero?.hp) ||
+  if (![1, 2, saveVersion].includes(entry?.version) || !Number.isFinite(entry.at) || !Number.isFinite(s?.hero?.hp) ||
       !Array.isArray(s.collection) || typeof s.world !== 'string') return null
-  if (entry.version === 1) {
+  if (entry.version === 1) s.collection.push(...starterCollection())
+  if (entry.version < saveVersion) {
+    s.hero.kind = 'hero'
+    s.hero.inventory = inventory(s.items > 0 ? ['fruit', 'pebble'] : ['pebble'])
+    s.gold = rules.baseGold + Math.max(0, (s.items ?? 0) - 1) * 5
+    s.cleared = {}
+    s.eventsSeen = {}
+    for (const unit of s.collection) unit.inventory ??= startingInventory(unit.kind)
+    for (const unit of s.battle?.units ?? []) {
+      unit.inventory = unit.kind === 'hero' ? [...s.hero.inventory] :
+        [...(s.collection.find(companion => companion.id === unit.id)?.inventory ?? inventory())]
+    }
+    delete s.items
     entry.version = saveVersion
-    s.collection.push(...starterCollection())
   }
   return entry
 }

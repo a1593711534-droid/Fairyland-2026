@@ -1,12 +1,16 @@
 import './style.css'
 import { version } from '../package.json'
-import { elements, hero, rules, skills, species, status, titleOf, waypoints, xpForLevel } from './game/content.js'
-import { act, active, alliesInTurn, areOpponents, elementOf, evolve, forecast, healParty, isWild, meters,
+import { elements, hero, items, rules, skills, species, status, titleOf, waypoints, waypointTypes, xpForLevel } from './game/content.js'
+import { act, active, alliesInTurn, areaAttack, areOpponents, elementOf, evolve, forecast, healParty, isWild, meters,
   percent, movementReactions, selectAlly, skillFor, startBattle, stat, unitById, validate, captureChance } from './game/combat.js'
 import { enemyCanPlay, enemyTurn } from './game/ai.js'
 import { distance, movementBlocks, movementMask, router, travel } from './game/geometry.js'
 import { latest, newGame, readSettings, readSlot, slots, writeSettings, writeSlot } from './game/save.js'
-import { Stage } from './render/stage.js'
+import { chooseEvent, requiresBattle } from './game/world.js'
+import { availableSummons, summonPlan } from './game/summoning.js'
+import { consume, itemProblem, purchase } from './game/inventory.js'
+import { button, goldLine, kitPanel, shopPanel, summonPanel } from './interface.js'
+import { FairylandAudio } from './render/audio.js'
 
 const app = document.querySelector('#app')
 app.innerHTML = '<div id="stage" hidden></div><div id="ui"></div><div id="tags"></div><div id="dialog"></div><div id="toast" role="status" aria-live="polite"></div>'
@@ -20,15 +24,22 @@ let modal = ''
 let settings = readSettings()
 let targetMode = 'move'
 let pendingSummon = null
+let placementPlan = []
+let commandMenu = false
+let pendingMove = null
+let shopTarget = 'hero'
 let worldPoint = null
 let busy = false
 let hoverRouter = null
 let toastTimer
-let audio
+const audio = new FairylandAudio()
+audio.configure(settings.volume, settings.music)
 let focusId = null
 let inspectReturn = null
 let selectWorldToken = 0
 let stage
+let Stage
+let sceneLoad
 
 const assetKey = u => u.kind === 'rival' ? 'hero' : u.kind + (u.evolved ? '-evolved' : '')
 const nodeName = key => waypoints[key]?.name ?? '微光林地'
@@ -37,12 +48,7 @@ const sign = (id, label = true) => {
   return '<span class="element" style="--element:' + e.color + '" title="' + e.name + '屬性">' + e.symbol + (label ? ' <span>' + e.name + '</span>' : '') + '</span>'
 }
 const brand = '<div class="brand"><span class="brand-mark">✧</span><span>FAIRYLAND</span></div>'
-const audioToggle = () => button(settings.volume ? '◖))' : '◖×', 'sound', { css: 'icon', title: settings.volume ? '靜音' : '開啟音效' })
-
-function button(name, code, { css = '', data = '', disabled = false, title = '' } = {}) {
-  return '<button type="button" class="' + css + '" data-do="' + code + '" data-value="' + data + '"' +
-    (title ? ' title="' + title + '" aria-label="' + title + '"' : '') + (disabled ? ' disabled' : '') + '>' + name + '</button>'
-}
+const audioToggle = () => button(settings.volume ? '◖))' : '◖×', 'sound', { css: 'icon', title: settings.volume ? '關閉音效' : '開啟音效' })
 
 function notify(message) {
   clearTimeout(toastTimer)
@@ -51,39 +57,40 @@ function notify(message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 3100)
 }
 
-function sound(type = 'tap') {
-  if (!settings.volume) return
-  const Audio = window.AudioContext ?? window.webkitAudioContext
-  if (!Audio) return
-  try {
-    audio ??= new Audio()
-    if (audio.state === 'suspended') void audio.resume().catch(() => {})
-    const notes = { tap: [440, 660], move: [244, 330], cast: [340, 550, 820], impact: [142, 220], reward: [392, 523, 659, 784] }
-    const now = audio.currentTime
-    notes[type].forEach((note, i) => {
-      const osc = audio.createOscillator()
-      const gain = audio.createGain()
-      osc.type = type === 'impact' ? 'triangle' : 'sine'
-      osc.frequency.setValueAtTime(note, now + i * .052)
-      gain.gain.setValueAtTime(.0001, now + i * .052)
-      gain.gain.exponentialRampToValueAtTime(settings.volume * .074, now + i * .052 + .022)
-      gain.gain.exponentialRampToValueAtTime(.0001, now + i * .052 + .26)
-      osc.connect(gain).connect(audio.destination)
-      osc.start(now + i * .052)
-      osc.stop(now + i * .052 + .28)
-    })
-  } catch { /* Sound is optional on browsers that restrict audio contexts. */ }
-}
+const sound = (type = 'tap', element) => audio.play(type, element)
 
 function save() {
   if (game && !writeSlot('auto', game)) notify('瀏覽器無法儲存進度。')
 }
 
+async function openGame(enter) {
+  if (stage) { enter(); return }
+  if (sceneLoad) return
+  sceneLoad = import('./render/stage.js')
+  const loading = setTimeout(() => notify('正在載入 3D 場景…'), 240)
+  ui.setAttribute('aria-busy', 'true')
+  try {
+    Stage = (await sceneLoad).Stage
+    enter()
+  } catch {
+    notify('3D 模組載入失敗，請再試一次。')
+  } finally {
+    clearTimeout(loading)
+    ui.removeAttribute('aria-busy')
+    sceneLoad = null
+  }
+}
+
 function setScene(next) {
   scene = next
+  toast.classList.remove('show')
+  audio.choose(next)
   modal = ''
   tags.replaceChildren()
   targetMode = 'move'
+  commandMenu = false
+  placementPlan = []
+  pendingMove = null
   pendingSummon = null
   hoverRouter = null
   if (next !== 'menu' && !stage) {
@@ -145,16 +152,27 @@ function renderChoose() {
 
 function renderWorld() {
   const stop = waypoints[worldPoint]
+  const mandatory = requiresBattle(game, worldPoint)
+  const seen = game.eventsSeen[worldPoint]
+  const type = stop.revisit && !mandatory ? 'battle' : stop.type
+  let details = type === 'battle' && stop.revisit
+    ? '你已完成這裡的任務。現在可以選擇與新的野生精靈交手。' : stop.text
+  const action = {
+    heal: ['在月泉休息', 'heal'],
+    shop: ['瀏覽商品', 'shop'],
+    event: ['查看果籃', 'world-event'],
+  }[type] ?? [mandatory ? '開始任務戰鬥' : '進入戰場', 'enter']
+  if (seen) details = '你已查看過被風吹落的果籃。'
   ui.innerHTML = '<section class="overlay world-screen"><header class="topbar">' + brand + '<div class="top-right">' +
-    button('精靈手冊', 'collection', { css: 'subtle' }) + button('存檔', 'save', { css: 'subtle' }) +
+    button('物品', 'world-kit', { css: 'subtle', disabled: busy }) +
+    button('精靈手冊', 'collection', { css: 'subtle', disabled: busy }) + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
     button('選單', 'pause', { css: 'subtle' }) + '</div></header><div class="world-title"><div class="eyebrow"><i></i> 大地圖</div><h1>月見森林</h1></div>' +
-    '<aside class="world-card"><div class="eyebrow">' + stop.type + '</div><h2>' + stop.name + '</h2><p>' + stop.text + '</p>' +
-    (worldPoint === 'camp' ? button('在月泉休息 <b>✧</b>', 'heal', { css: 'primary full', disabled: busy }) :
-      button('進入戰場 <b>↗</b>', 'enter', { css: 'primary full', disabled: busy || !game.hero.hp })) + '</aside>' +
-    '<footer class="map-footer"><span>拖曳右鍵旋轉　／　滾輪縮放</span><span>戰鬥勝利 ' + game.wins + ' 場</span></footer></section>'
+    '<aside class="world-card"><div class="eyebrow">' + waypointTypes[type].label + '</div><h2>' + stop.name + '</h2><p>' + details + '</p>' +
+    button(action[0], action[1], { css: 'primary full', disabled: busy || Boolean(seen) || (action[1] === 'enter' && !game.hero.hp) }) + '</aside>' +
+    '<footer class="map-footer"><span>拖曳右鍵旋轉　／　滾輪縮放</span><span>' + goldLine(game.gold) + '　勝利 ' + game.wins + ' 場</span></footer></section>'
   tags.innerHTML = Object.entries(waypoints).map(([key, node]) => '<div class="tag waypoint" data-node="' + key + '">' +
-    button('<span class="waypoint-icon">' + ({ camp: '✧', glade: '✦', ruin: '◈' }[key]) + '</span><span>' + node.name + '</span>',
-      'walk', { css: key === worldPoint ? 'selected' : '', data: key }) + '</div>').join('')
+    button('<span class="waypoint-icon">' + waypointTypes[node.revisit && !requiresBattle(game, key) ? 'battle' : node.type].icon +
+      '</span><span>' + node.name + '</span>', 'walk', { css: key === worldPoint ? 'selected' : '', data: key }) + '</div>').join('')
 }
 
 function card(actor) {
@@ -177,7 +195,8 @@ function renderBattle() {
   const actor = active(b)
   const canAct = actor.team === 'ally' && !busy && !b.result
   const group = alliesInTurn(b)
-  const summonable = game.collection.some(unit => unit.hp > 0 && !b.units.some(u => u.id === unit.id && !u.dismissed))
+  const summonable = !actor.summoned && actor.kind === 'hero' &&
+    availableSummons(game, actor).some(unit => actor.mana >= species[unit.kind].summon)
   const action = (label, code, isDisabled = false, data = code) => button(label, code, {
     css: 'action' + (targetMode === data ? ' selected' : ''), disabled: !canAct || isDisabled, data,
   })
@@ -193,13 +212,21 @@ function renderBattle() {
     '<div id="preview"></div><div class="combat-log" aria-live="polite">' +
     b.events.filter(event => event.type === 'text').slice(-3).map(event => '<div>' + event.text + '</div>').join('') + '</div>' +
     '<footer class="battle-footer">' + card(actor) +
-    '<div class="toolbar"><div class="toolbar-actions">' + action('↗ 移動', 'mode', false, 'move') +
-    action('† 攻擊', 'mode', !actor.action, 'attack') + action('脫離', 'disengage', !actor.action) + action(sign(elementOf(actor), false) + ' ' + skills[skillFor(actor)].name, 'mode',
-      !actor.action || actor.mana < (skills[skillFor(actor)].mana ?? 0), 'skill') +
-    (actor.kind === 'hero' ? action('✧ 召喚', 'summons', !summonable) + action('◎ 收服', 'mode', !actor.action || actor.mana < rules.captureMana, 'capture') :
-      action('↶ 撤回', 'recall', false)) + action('✚ 回復果 ×' + game.items, 'item', !actor.bonus || !game.items || actor.hp >= stat(actor, 'hp')) +
-    button('狀態', 'status', { css: 'action', disabled: busy }) + '</div><p class="action-hint">' + hint() + '</p></div>' +
-    button('待機 <b>→</b>', 'end', { css: 'primary end-turn', disabled: !canAct }) + '</footer></section>'
+    '<div class="battle-caption">' + hint() + '</div>' +
+    (pendingMove ? button('確認移動', 'confirm-move', { css: 'primary end-turn' }) :
+      targetMode !== 'move' ? button('返回', 'cancel-target', { css: 'subtle end-turn', disabled: busy }) :
+      button(commandMenu ? '收起指令' : '指令', 'commands', { css: 'primary end-turn', disabled: !canAct })) +
+    '</footer></section>'
+  const spell = skills[skillFor(actor)]
+  const commandBox = commandMenu && canAct ? '<div id="context-box" class="context-box" role="group" aria-label="' +
+    titleOf(actor) + '的指令"><strong>' + titleOf(actor) + '</strong><div>' +
+    action('† 攻擊', 'mode', !actor.action, 'attack') +
+    action(sign(elementOf(actor), false) + ' ' + spell.name, 'mode', !actor.action || actor.mana < (spell.mana ?? 0), 'skill') +
+    (actor.kind === 'hero' ? action('✧ 召喚', 'summons', !summonable) +
+      action('◎ 收服', 'mode', !actor.action || actor.mana < rules.captureMana, 'capture') :
+      action('↶ 撤回', 'recall')) +
+    action('物品', 'battle-kit') + action('狀態', 'status') + action('脫離', 'disengage', !actor.action) +
+    action('衝刺', 'rush', !actor.action) + action('待機', 'end') + '</div></div>' : ''
   tags.innerHTML = settings.labels || ['attack', 'skill', 'capture'].includes(targetMode)
     ? b.units.filter(u => u.hp > 0 && !u.dismissed).map(u => {
       const selected = u.id === actor.id
@@ -210,12 +237,15 @@ function renderBattle() {
           '</span><span class="tiny-hp"><i style="width:' + (u.hp / stat(u, 'hp') * 100) + '%"></i></span>',
         'unit', { data: u.id, title: titleOf(u) + '，' + u.hp + ' 生命' + (shortStatus(u) ? '，' + shortStatus(u) : '') }) + '</div>'
     }).join('') : ''
+  tags.insertAdjacentHTML('beforeend', commandBox)
 }
 
 function hint() {
   if (busy) return '行動結算中'
-  if (targetMode === 'move') return '青色區域可抵達。移動滑鼠預覽路徑，紅線超出距離。'
-  if (targetMode === 'summon') return '選擇法陣範圍內的空地。Esc 取消。'
+  if (pendingMove) return '路徑已選擇。按確認移動，或點另一個位置重新規劃。'
+  if (targetMode === 'move') return '青色是可達範圍。點地面規劃路徑，點角色開啟指令。'
+  if (targetMode === 'summon') return '藍紫色是召喚範圍。點空地放置虛影。'
+  if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) return '選擇法術中心。範圍內的我方也可能受到傷害。'
   if (targetMode === 'capture') return '選擇野生精靈。降低血量或施加異常可提高成功率。'
   return '點選目標確認攻擊。名稱旁顯示命中率或不可攻擊的原因。'
 }
@@ -228,7 +258,8 @@ function targetPreview(unit) {
     if (!isWild(unit)) return '不可收服'
     return validate(game, { type: 'capture', target: unit.id }).ok ? percent(captureChance(unit)) : '無法觸及'
   }
-  const f = forecast(actor, unit, targetMode === 'attack' ? 'attack' : skillFor(actor))
+  const key = targetMode === 'attack' ? 'attack' : skillFor(actor)
+  const f = forecast(actor, unit, key)
   if (f.distance > f.range) return '太遠'
   if (!f.clear) return '掩體'
   return percent(f.accuracy)
@@ -243,7 +274,9 @@ function renderInspect() {
     species[unit.kind].form + '　/　' + skills[species[unit.kind].skill].name + '　/　' + (unit.evolved ? '已進化' : 'Lv. ' + rules.evolutionLevel + ' 可進化') +
     '</p><dl class="character-stats"><div><dt>生命</dt><dd>' + unit.hp + ' / ' + stat(unit, 'hp') + '</dd></div><div><dt>經驗</dt><dd>' + unit.xp +
     (unit.level < rules.maxLevel ? ' / ' + xpForLevel(unit.level + 1) : '') + '</dd></div></dl>' +
-    (next ? button('進化為 ' + species[unit.kind].evolved + ' <b>✧</b>', 'evolve', { css: 'primary large' }) : '') + '</div></section>'
+    '<div class="inspect-buttons">' +
+    (next ? button('進化選項', 'evolve-menu', { css: 'primary large', disabled: busy }) : '') +
+    button('物品欄', 'inspect-kit', { css: 'subtle', disabled: busy }) + '</div></div></section>'
 }
 
 function render() {
@@ -266,7 +299,8 @@ function renderModal() {
   if (modal === 'settings') {
     title = '設定'
     body = '<label class="setting"><span>音效音量</span><input type="range" id="volume" min="0" max="1" step=".05" value="' +
-      settings.volume + '"></label><label class="setting"><span>簡化動畫與特效</span><input type="checkbox" id="reduced"' +
+      settings.volume + '"></label><label class="setting"><span>背景音樂</span><input type="range" id="music" min="0" max="1" step=".05" value="' +
+      settings.music + '"></label><label class="setting"><span>簡化動畫與特效</span><input type="checkbox" id="reduced"' +
       (settings.reduced ? ' checked' : '') + '></label><label class="setting"><span>顯示戰場名稱</span><input type="checkbox" id="labels"' +
       (settings.labels ? ' checked' : '') + '></label>'
   }
@@ -298,18 +332,45 @@ function renderModal() {
       button('說明 <b>↗</b>', 'help', { css: 'dialog-row' }) +
       button('返回主選單 <b>↗</b>', 'menu', { css: 'dialog-row' })
   }
-  if (modal === 'collection' || modal === 'summons') {
-    const summoning = modal === 'summons'
-    title = summoning ? '召喚精靈' : '精靈手冊'
-    const available = summoning ? game.collection.filter(u => u.hp > 0 &&
-      !game.battle.units.some(onField => u.id === onField.id && !onField.dismissed)) : game.collection
+  if (modal === 'summons') {
+    title = '配置召喚'
+    body = summonPanel(game, active(game.battle), placementPlan, sign)
+  }
+  if (modal === 'collection') {
+    title = '精靈手冊'
+    const available = game.collection
     body = available.map(unit => button('<span>' + sign(elementOf(unit), false) + ' <strong>' + titleOf(unit) +
       '</strong><small> Lv. ' + unit.level + '　生命 ' + unit.hp + ' / ' + stat(unit, 'hp') +
       (shortStatus(unit) ? '　' + shortStatus(unit) : '') + '</small></span><b>' +
-      (summoning ? '魔力 ' + species[unit.kind].summon : unit.evolved ? '已進化' : unit.level >= rules.evolutionLevel ? '可進化 ✧' : '↗') + '</b>',
-    summoning ? 'pick-summon' : 'inspect', {
-      css: 'dialog-row', data: unit.id, disabled: summoning && active(game.battle).mana < species[unit.kind].summon,
+      (unit.evolved ? '已進化' : unit.level >= rules.evolutionLevel ? '可進化 ✧' : '↗') + '</b>',
+    'inspect', {
+      css: 'dialog-row', data: unit.id,
     })).join('') || '<p class="muted">在戰場收服野生精靈後，就能在這裡查看。</p>'
+  }
+  if (['battle-kit', 'world-kit', 'inspect-kit'].includes(modal)) {
+    const unit = kitUnit()
+    title = titleOf(unit) + '的物品欄'
+    body = kitPanel(unit, { battle: modal === 'battle-kit',
+      problem: (owner, key) => itemProblem(owner, key, stat(owner, 'hp')) || (modal === 'battle-kit' && !owner.bonus ? '附贈行動已用完。' : null),
+    })
+  }
+  if (modal === 'shop') {
+    title = waypoints[worldPoint].name
+    const carriers = [{ id: 'hero', text: hero.name }, ...game.collection.map(unit => ({ id: unit.id, text: titleOf(unit) }))]
+    body = shopPanel(game, carriers, shopTarget)
+  }
+  if (modal === 'world-event') {
+    const site = waypoints[worldPoint]
+    title = site.name
+    body = '<p class="muted">' + site.text + '</p>' +
+      button('拾起 ' + site.event.gold + ' 金幣', 'event-choose', { data: 'gold', css: 'dialog-row' }) +
+      button('帶走' + items[site.event.item].name, 'event-choose', { data: 'item', css: 'dialog-row' })
+  }
+  if (modal === 'evolve-menu') {
+    const unit = game.collection.find(u => u.id === focusId)
+    title = '進化'
+    body = '<p>' + titleOf(unit) + '　→　' + species[unit.kind].evolved + '</p><p class="muted">生命上限、能力及造型將成長。</p>' +
+      button('確認進化', 'evolve', { css: 'primary full' })
   }
   if (modal === 'status') {
     const unit = active(game.battle)
@@ -323,9 +384,10 @@ function renderModal() {
     title = victory ? '戰鬥勝利' : '撤退'
     body = '<p class="muted">' + (victory ? '林地暫時恢復平靜。夥伴會帶著目前的生命值與異常狀態返回手冊。' :
       '莉歐倒下了。回到月泉營地可以治療隊伍，再次挑戰。') + '</p>' +
+      (victory ? goldLine(game.battle.reward ?? 0) : '') +
       button('返回大地圖 <b>↗</b>', 'leave-battle', { css: 'primary full' })
   }
-  dialog.innerHTML = '<div class="modal-shade"><section class="dialog-panel" role="dialog" aria-modal="true" aria-label="' + title + '">' +
+  dialog.innerHTML = '<div class="modal-shade' + (modal === 'summons' ? ' planning' : '') + '"><section class="dialog-panel" role="dialog" aria-modal="true" aria-label="' + title + '">' +
     '<header><h2>' + title + '</h2>' + (modal === 'result' ? '' : button('×', 'close', { css: 'icon', title: '關閉' })) + '</header>' +
     '<div class="dialog-body">' + body + '</div></section></div>'
 }
@@ -341,8 +403,34 @@ function syncModels() {
   }
 }
 
+function kitUnit() {
+  if (modal === 'battle-kit') return active(game.battle)
+  if (modal === 'inspect-kit') return game.collection.find(unit => unit.id === focusId)
+  return game.hero
+}
+
+function drawGhosts() {
+  if (!stage || scene !== 'battle') return
+  const ids = placementPlan.map(entry => 'ghost-' + entry.id)
+  for (const id of stage.units.keys()) if (id.startsWith('ghost-') && !ids.includes(id)) stage.remove(id)
+  for (const row of placementPlan) {
+    const unit = game.collection.find(entry => entry.id === row.id)
+    if (unit) stage.bind('ghost-' + row.id, assetKey(unit), row.at, { ghost: true, scale: .94 })
+  }
+}
+
 function projectTags(renderer) {
   for (const tag of tags.children) {
+    if (tag.id === 'context-box') {
+      const id = game.battle.active
+      const pivot = renderer.units.get(id)?.pivot.position
+      if (!pivot) continue
+      const at = renderer.project(pivot, 1.8)
+      const left = Math.max(12, Math.min(at.x + 38, renderer.width - tag.offsetWidth - 12))
+      const top = Math.max(85, Math.min(at.y - 25, renderer.height - tag.offsetHeight - 120))
+      tag.style.transform = 'translate(' + left + 'px,' + top + 'px)'
+      continue
+    }
     const u = tag.dataset.unit && unitById(game.battle, tag.dataset.unit)
     const pivot = u && renderer.units.get(u.id)?.pivot.position
     const node = waypoints[tag.dataset.node]
@@ -358,6 +446,7 @@ function refreshMarks() {
   stage.clearMarks()
   stage.clearHover()
   const b = game.battle
+  drawGhosts()
   if (!b || b.result) return
   for (const unit of b.units) {
     if (!unit.hp || unit.dismissed) continue
@@ -366,19 +455,23 @@ function refreshMarks() {
   }
   const actor = active(b)
   if (busy || actor.team !== 'ally') return
-  if (targetMode === 'move' && actor.movement >= .18) {
+  if (targetMode === 'move' && modal !== 'summons' && actor.movement >= .18) {
     hoverRouter ??= router(actor.pos, movementBlocks(b.units.filter(u => !u.dismissed), actor))
     stage.movementArea(movementMask(actor.pos, actor.movement, hoverRouter))
   }
+  const overlayMode = modal === 'summons' ? 'summon' : targetMode
   const range = { capture: rules.captureRange, summon: rules.summonRange,
-    attack: skills.attack.range, skill: skills[skillFor(actor)].range }[targetMode]
-  if (range) stage.mark(actor.pos, range, '#ebce92', true)
+    attack: skills.attack.range, skill: skills[skillFor(actor)].range }[overlayMode]
+  const colors = { summon: '#abacff', attack: '#ff906f', skill: elements[elementOf(actor)].color, capture: '#efdc9e' }
+  if (range) stage.mark(actor.pos, range, colors[overlayMode], true)
+  for (const { at } of placementPlan) stage.mark(at, rules.bodyRadius * 1.5, colors.summon)
+  if (pendingMove) stageHover(pendingMove, true)
 }
 
-function stageHover(pos) {
+function stageHover(pos, lock = false) {
   if (!pos) {
     const label = document.querySelector('#preview')
-    if (label) label.textContent = ''
+    if (label && !pendingMove) label.textContent = ''
     return
   }
   if (busy || modal || scene !== 'battle' || game.battle.result) return
@@ -386,11 +479,22 @@ function stageHover(pos) {
   const actor = active(b)
   if (actor.team !== 'ally') return
   if (targetMode === 'summon') {
-    const check = validate(game, { type: 'summon', id: pendingSummon, at: pos })
-    stage.path(pos, [], check.ok ? '#f4dfaf' : '#f7827c')
+    const check = summonPlan(game, actor, [...placementPlan, { id: pendingSummon, at: pos }])
+    stage.path(pos, [], check.ok ? '#b9b9ff' : '#f7827c')
     return
   }
-  if (targetMode !== 'move') return
+  const spell = skills[skillFor(actor)]
+  if (targetMode === 'skill' && spell.radius) {
+    const preview = areaAttack(b, actor, skillFor(actor), pos)
+    stage.path(pos, [], preview.ok ? elements[elementOf(actor)].color : '#f7827c', spell.radius)
+    const caption = document.querySelector('.battle-caption')
+    if (caption) caption.textContent = preview.ok
+      ? preview.attacks.map(({ target, preview }) => titleOf(target) + ' ' + percent(preview.accuracy) +
+        (areOpponents(actor, target) ? '' : ' 我方')).join('　·　')
+      : preview.problem
+    return
+  }
+  if (targetMode !== 'move' || pendingMove && !lock) return
   hoverRouter ??= router(actor.pos, movementBlocks(b.units.filter(u => !u.dismissed), actor))
   const path = hoverRouter(pos)
   const within = path && path.cost <= actor.movement + .00001
@@ -420,17 +524,36 @@ function stageHover(pos) {
 function stageClick(pos, unit) {
   if (busy || modal) return
   if (unit && targetMode !== 'summon') { clickUnit(unit); return }
-  if (targetMode === 'move') void playerAct({ type: 'move', at: pos })
-  if (targetMode === 'summon') void playerAct({ type: 'summon', at: pos, id: pendingSummon })
+  if (targetMode === 'move') {
+    const check = validate(game, { type: 'move', at: pos })
+    if (!check.ok) { notify(check.problem); return }
+    pendingMove = pos
+    commandMenu = false
+    render()
+  }
+  if (targetMode === 'summon') {
+    const next = [...placementPlan, { id: pendingSummon, at: pos }]
+    const check = summonPlan(game, active(game.battle), next)
+    if (!check.ok) { notify(check.problem); return }
+    placementPlan = next
+    pendingSummon = null
+    targetMode = 'move'
+    modal = 'summons'
+    render()
+  }
+  if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) {
+    void playerAct({ type: 'strike', skill: skillFor(active(game.battle)), at: pos })
+  }
 }
 
 function clickUnit(id) {
   if (busy || modal || scene !== 'battle') return
   if (targetMode === 'capture') void playerAct({ type: 'capture', target: id })
   else if (targetMode === 'attack' || targetMode === 'skill') void playerAct({
-    type: 'strike', target: id, skill: targetMode === 'attack' ? 'attack' : skillFor(active(game.battle)),
+    type: 'strike', target: id, at: unitById(game.battle, id).pos,
+    skill: targetMode === 'attack' ? 'attack' : skillFor(active(game.battle)),
   })
-  else if (selectAlly(game.battle, id)) { hoverRouter = null; save(); render() }
+  else if (selectAlly(game.battle, id)) { hoverRouter = null; pendingMove = null; commandMenu = true; save(); render() }
   else {
     const u = unitById(game.battle, id)
     if (u) notify(titleOf(u) + ' · ' + turnName(u) + ' · 生命 ' + u.hp + ' / ' + stat(u, 'hp') +
@@ -458,7 +581,7 @@ function floatText(id, text) {
 async function animate(events) {
   for (const e of events) {
     const actor = pointOf(e.actor)
-    const target = pointOf(e.target)
+    const target = e.center ?? pointOf(e.target)
     if (e.type === 'move') {
       sound('move')
       await stage.move(e.actor, e.points, settings.reduced)
@@ -466,9 +589,10 @@ async function animate(events) {
     if (e.type === 'cast') {
       stage.face(e.actor, target)
       stage.play(e.actor, e.clip)
-      sound('cast')
+      sound('cast', e.element)
       if (!settings.reduced && actor && target) stage.effect(actor, e.element, 'cast', target)
-      await wait(330)
+      await wait(350)
+      if (!settings.reduced && target && e.radius) stage.effect(target, e.element, 'area')
     }
     if (e.type === 'impact') {
       stage.play(e.target, e.dead ? 'death' : 'hit')
@@ -480,14 +604,18 @@ async function animate(events) {
       floatText(e.target, '未命中')
       await wait(330)
     }
-    if (e.type === 'summon') {
-      const unit = unitById(game.battle, e.target)
+    if (e.type === 'summon-batch') {
       stage.play(e.actor, 'summon')
-      await stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1 })
-      stage.play(unit.id, 'appear')
-      if (!settings.reduced) stage.effect(unit.pos, e.element, 'summon')
+      const arrivals = e.targets.map(id => unitById(game.battle, id))
+      sound('cast', elementOf(arrivals[0]))
+      await wait(300)
+      await Promise.all(arrivals.map(unit => stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1 })))
+      for (const unit of arrivals) {
+        stage.play(unit.id, 'appear')
+        if (!settings.reduced) stage.effect(unit.pos, elementOf(unit), 'summon')
+      }
       sound('reward')
-      await wait(760)
+      await wait(820)
     }
     if (e.type === 'capture') {
       stage.face(e.actor, target)
@@ -540,6 +668,10 @@ async function playerAct(command) {
   busy = true
   targetMode = 'move'
   pendingSummon = null
+  pendingMove = null
+  placementPlan = []
+  commandMenu = false
+  modal = ''
   hoverRouter = null
   save()
   render()
@@ -563,6 +695,28 @@ async function walkTo(key) {
   busy = false
   game.world = key
   save()
+  if (requiresBattle(game, key)) enterBattle()
+  else render()
+}
+
+function enterBattle() {
+  if (busy || !startBattle(game, worldPoint)) return
+  save()
+  setScene('battle')
+  void advanceEnemies()
+}
+
+function cancelTarget() {
+  if (targetMode === 'summon' && pendingSummon) {
+    pendingSummon = null
+    modal = 'summons'
+  } else {
+    placementPlan = []
+    modal = ''
+  }
+  pendingMove = null
+  targetMode = 'move'
+  commandMenu = false
   render()
 }
 
@@ -570,24 +724,26 @@ app.addEventListener('click', event => {
   const control = event.target.closest('button[data-do]')
   if (!control || control.disabled) return
   const { do: code, value } = control.dataset
+  audio.enable()
   sound()
-  if (code === 'continue') resume(latest())
-  if (code === 'new') setScene('choose')
+  if (code === 'continue') void openGame(() => resume(latest()))
+  if (code === 'new') void openGame(() => setScene('choose'))
   if (code === 'start') { game = newGame(); save(); setScene('world') }
   if (code === 'menu') { save(); busy = false; setScene('menu') }
-  if (['settings', 'load', 'help', 'pause', 'save', 'collection', 'summons', 'status'].includes(code)) {
+  if (['settings', 'load', 'help', 'pause', 'save', 'collection', 'summons', 'status', 'world-kit', 'battle-kit', 'inspect-kit', 'shop', 'world-event', 'evolve-menu'].includes(code)) {
     modal = code
     stage?.clearHover()
     renderModal()
     dialog.querySelector('button, input')?.focus()
   }
-  if (code === 'close') { modal = ''; renderModal() }
+  if (code === 'close') { if (modal === 'summons') cancelTarget(); else { modal = ''; renderModal() } }
   if (code === 'sound') {
     settings.volume = settings.volume ? 0 : .45
     writeSettings(settings)
+    audio.configure(settings.volume, settings.music)
     render()
   }
-  if (code === 'load-slot') resume(readSlot(value))
+  if (code === 'load-slot') void openGame(() => resume(readSlot(value)))
   if (code === 'save-slot') {
     if (writeSlot(value, game)) { modal = ''; renderModal(); notify('已儲存至存檔 ' + value + '。') }
     else notify('瀏覽器無法儲存進度。')
@@ -598,32 +754,59 @@ app.addEventListener('click', event => {
     save()
     render()
     sound('reward')
-    notify('生命、魔力與回復果已補滿，異常已解除。')
+    notify('生命與魔力已回復，異常已解除。')
   }
-  if (code === 'enter') {
-    startBattle(game, worldPoint)
-    save()
-    setScene('battle')
-    void advanceEnemies()
-  }
+  if (code === 'enter') enterBattle()
   if (code === 'leave-battle') { game.battle = null; save(); setScene('world') }
-  if (code === 'mode') { targetMode = value; render() }
-  if (code === 'pick-summon') { modal = ''; pendingSummon = value; targetMode = 'summon'; render() }
-  if (code === 'select') { if (selectAlly(game.battle, value)) { hoverRouter = null; targetMode = 'move'; save(); render() } }
+  if (code === 'commands') { commandMenu = !commandMenu; render() }
+  if (code === 'mode') { targetMode = value; commandMenu = false; render() }
+  if (code === 'cancel-target') cancelTarget()
+  if (code === 'confirm-move' && pendingMove) void playerAct({ type: 'move', at: pendingMove })
+  if (code === 'pick-summon') { modal = ''; commandMenu = false; pendingSummon = value; targetMode = 'summon'; render() }
+  if (code === 'drop-summon') { placementPlan = placementPlan.filter(row => row.id !== value); render() }
+  if (code === 'confirm-summons') void playerAct({ type: 'summon-batch', placements: placementPlan })
+  if (code === 'select' && selectAlly(game.battle, value)) {
+    hoverRouter = null; targetMode = 'move'; pendingMove = null; commandMenu = true; save(); render()
+  }
   if (code === 'unit') clickUnit(value)
-  if (['item', 'recall', 'end', 'disengage'].includes(code)) void playerAct({ type: code })
+  if (['recall', 'end', 'disengage', 'rush'].includes(code)) void playerAct({ type: code })
+  if (code === 'use-item') {
+    if (scene === 'battle') void playerAct({ type: 'item', item: value })
+    else {
+      const unit = kitUnit()
+      const problem = consume(unit, value, stat(unit, 'hp'))
+      if (problem) notify(problem); else { save(); render() }
+    }
+  }
+  if (code === 'drop-item') {
+    const unit = kitUnit()
+    const index = unit.inventory.indexOf(value)
+    if (index >= 0) { unit.inventory[index] = null; save(); render() }
+  }
+  if (code === 'shop-target') { shopTarget = value; renderModal() }
+  if (code === 'buy-item') {
+    const carrier = shopTarget === 'hero' ? game.hero : game.collection.find(unit => unit.id === shopTarget)
+    const problem = purchase(game, carrier, value)
+    if (problem) notify(problem); else { save(); render(); notify('已將' + items[value].name + '放入物品欄。') }
+  }
+  if (code === 'event-choose') {
+    const problem = chooseEvent(game, worldPoint, value)
+    if (problem) notify(problem); else { modal = ''; save(); render(); sound('reward') }
+  }
   if (code === 'inspect') { inspectReturn = scene; focusId = value; setScene('inspect') }
   if (code === 'inspect-back') { setScene(inspectReturn); modal = 'collection'; renderModal() }
   if (code === 'evolve') {
     const unit = game.collection.find(u => u.id === focusId)
     if (evolve(unit)) {
+      modal = ''
       save()
       stage.remove('collection-view')
       stage.bind('collection-view', assetKey(unit), { x: .78, z: 0 }, { angle: -.22 }).then(() => {
-        stage.play('collection-view', 'appear')
-        if (!settings.reduced) stage.effect({ x: .78, z: 0 }, elementOf(unit), 'summon')
+        if (scene !== 'inspect' || unit.id !== focusId) return
+        stage.play('collection-view', 'evolve')
+        if (!settings.reduced) stage.effect({ x: .78, z: 0 }, elementOf(unit), 'evolve')
       })
-      sound('reward')
+      sound('evolve', elementOf(unit))
       render()
     }
   }
@@ -634,7 +817,8 @@ dialog.addEventListener('input', event => {
   if (!(input instanceof HTMLInputElement)) return
   settings[input.id] = input.type === 'checkbox' ? input.checked : Number(input.value)
   writeSettings(settings)
-  if (input.id !== 'volume') {
+  audio.configure(settings.volume, settings.music)
+  if (!['volume', 'music'].includes(input.id)) {
     if (scene === 'battle') renderBattle()
     document.body.classList.toggle('reduced', settings.reduced)
   }
@@ -643,14 +827,15 @@ dialog.addEventListener('input', event => {
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !busy) {
     if (modal === 'result') return
-    if (modal) { modal = ''; renderModal() }
-    else if (scene === 'battle' && targetMode !== 'move') { targetMode = 'move'; render() }
+    if (modal === 'summons' || scene === 'battle' && !modal && (targetMode !== 'move' || pendingMove || commandMenu)) cancelTarget()
+    else if (modal) { modal = ''; renderModal() }
     else if (scene !== 'menu') { modal = 'pause'; renderModal() }
   }
   if (event.code === 'Space' && !event.repeat && !modal && scene === 'battle' &&
       !['BUTTON', 'INPUT'].includes(document.activeElement?.tagName)) {
     event.preventDefault()
-    void playerAct({ type: 'end' })
+    if (pendingMove) void playerAct({ type: 'move', at: pendingMove })
+    else if (targetMode === 'move') void playerAct({ type: 'end' })
   }
 })
 

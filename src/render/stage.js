@@ -90,6 +90,8 @@ export class Stage {
   setMode(mode) {
     if (mode === this.mode) return
     this.mode = mode
+    for (const tick of this.effects) tick(Infinity)
+    this.effects = []
     this.host.hidden = mode === 'menu'
     for (const id of this.units.keys()) this.remove(id)
     this.clearMarks()
@@ -138,12 +140,19 @@ export class Stage {
       const model = cloneUnit(data)
       model.scene.traverse(obj => {
         if (!obj.isMesh) return
-        obj.castShadow = true
+        obj.castShadow = !options.ghost
         obj.receiveShadow = false
         obj.frustumCulled = false
-        if (options.tint) {
+        if (options.tint || options.ghost) {
           obj.material = obj.material.clone()
-          obj.material.color.multiply(new T.Color(options.tint))
+          obj.material.color.multiply(new T.Color(options.tint ?? '#b8d1ff'))
+          if (options.ghost) {
+            obj.material.transparent = true
+            obj.material.opacity = .42
+            obj.material.depthWrite = false
+            obj.raycast = () => {}
+          }
+          obj.userData.ownedMaterial = true
         }
       })
       pivot.add(model.scene)
@@ -159,6 +168,7 @@ export class Stage {
     if (!unit) return
     unit.travel?.resolve()
     unit.mixer?.stopAllAction()
+    unit.pivot.traverse(obj => { if (obj.userData.ownedMaterial) obj.material.dispose() })
     this.actors.remove(unit.pivot)
     this.units.delete(id)
   }
@@ -271,12 +281,13 @@ export class Stage {
         this.placeCamera()
         return
       }
-      if (this.mode === 'battle') this.callbacks.hover(this.worldPoint(event))
+      if (this.mode === 'battle') this.pendingPointer = event
     })
     const release = () => { this.drag = null }
     this.canvas.addEventListener('pointerup', release)
     this.canvas.addEventListener('pointercancel', release)
     this.canvas.addEventListener('pointerleave', () => {
+      this.pendingPointer = null
       this.clearHover()
       this.callbacks.hover(null)
     })
@@ -373,9 +384,9 @@ export class Stage {
     this.clear(this.cursor)
   }
 
-  path(destination, segments, marker) {
+  path(destination, segments, marker, radius = .25) {
     this.clearHover()
-    this.cursor.add(this.ring(destination, .25, marker))
+    this.cursor.add(this.ring(destination, radius, marker, .97, radius > 1 ? .975 : .86))
     for (const { points, color } of segments) {
       if (points.length < 2) continue
       const dots = points.map(p => new T.Vector3(p.x, .068, p.z))
@@ -398,6 +409,11 @@ export class Stage {
     const dt = Math.min(.12, (now - this.last) / 1000)
     this.last = now
     if (this.host.hidden) return
+    if (this.pendingPointer) {
+      const pointer = this.pendingPointer
+      this.pendingPointer = null
+      this.callbacks.hover(this.worldPoint(pointer))
+    }
     for (const unit of this.units.values()) {
       unit.mixer?.update(dt)
       this.tickTravel(unit, dt)

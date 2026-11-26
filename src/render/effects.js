@@ -28,7 +28,7 @@ export function trailFX(scene, point, element, type, toward = null) {
   const origin = new T.Vector3(point.x, .08, point.z)
   group.position.copy(origin)
   const destination = toward && new T.Vector3(toward.x, .92, toward.z)
-  const bands = type === 'cast' ? 0 : element === 'water' || element === 'wind' ? 3 : 1
+  const bands = type === 'cast' ? 0 : type === 'evolve' ? 4 : element === 'water' || element === 'wind' ? 3 : 1
   for (let i = 0; i < bands; i++) {
     const ring = new T.Mesh(new T.RingGeometry(.92, 1, element === 'earth' ? 7 : element === 'ice' ? 6 : 64),
       new T.MeshBasicMaterial({ color, side: T.DoubleSide, transparent: true, depthWrite: false, opacity: .6 }))
@@ -37,8 +37,20 @@ export function trailFX(scene, point, element, type, toward = null) {
     group.add(ring)
     rings.push(ring)
   }
+  const arcCount = type === 'evolve' ? 5 : type === 'cast' ? 1 : element === 'thunder' ? 3 : 2
+  const arcs = []
+  for (let i = 0; i < arcCount; i++) {
+    const arcGeometry = new T.BufferGeometry()
+    const points = new Float32Array(45 * 3)
+    arcGeometry.setAttribute('position', new T.BufferAttribute(points, 3))
+    const arc = new T.Line(arcGeometry, new T.LineBasicMaterial({ color: i % 2 ? '#fff4d4' : color,
+      transparent: true, depthWrite: false, blending: T.AdditiveBlending }))
+    arc.frustumCulled = false
+    group.add(arc)
+    arcs.push(arc)
+  }
   scene.add(group)
-  const duration = type === 'cast' ? .52 : 1.13
+  const duration = type === 'cast' ? .36 : type === 'evolve' ? 2.2 : type === 'area' ? .82 : 1.13
   let age = 0
   return dt => {
     age += dt
@@ -53,7 +65,9 @@ export function trailFX(scene, point, element, type, toward = null) {
       const k = .23 + (i * 37 % 23) / 23
       const pos = profile.curve(a, k, inward ? 1 - t : t)
       const scale = type === 'cast' ? .33 : 1
-      vertices.set(pos.map(value => value * scale), i * 3)
+      vertices[i * 3] = pos[0] * scale
+      vertices[i * 3 + 1] = pos[1] * scale
+      vertices[i * 3 + 2] = pos[2] * scale
     }
     geometry.attributes.position.needsUpdate = true
     dots.material.opacity = .86 * (1 - t ** 2)
@@ -62,6 +76,21 @@ export function trailFX(scene, point, element, type, toward = null) {
       ring.scale.setScalar(radius)
       ring.position.y = .022 + i * .089
       ring.material.opacity = .60 * (1 - t) / (1 + i * .42)
+    }
+    for (const [i, arc] of arcs.entries()) {
+      const position = arc.geometry.attributes.position
+      const flow = inward ? 1 - t : t
+      for (let j = 0; j < position.count; j++) {
+        const u = j / (position.count - 1)
+        const sweep = type === 'evolve' ? 4.8 : 2.3
+        const r = (type === 'cast' ? .31 : .55 + .67 * flow) * (1 + i * .14)
+        const a = u * sweep + (i * TAU / arcCount) + flow * 2
+        const profilePoint = profile.curve(a, r, Math.min(1, flow * .7 + u * .29))
+        const seam = type === 'evolve' ? 1.76 * u : 0
+        position.setXYZ(j, profilePoint[0], profilePoint[1] + seam, profilePoint[2])
+      }
+      position.needsUpdate = true
+      arc.material.opacity = .86 * sin(Math.PI * t) / (1 + i * .2)
     }
     if (age < duration) return true
     scene.remove(group)

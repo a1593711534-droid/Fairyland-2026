@@ -256,10 +256,15 @@ def skeleton(name, height, hind_y, front_y, span, bird=False, person=False):
 
 
 def animate(rig, style):
+    gait, lift, strike_gain, walk_time = {
+        'hero': (.54,.072,1.0,27), 'turtle': (.32,.035,.76,39), 'dino': (.55,.080,1.27,31),
+        'cat': (.61,.087,1.12,23), 'bird': (.36,.163,.86,25), 'mouse': (.71,.142,.69,20),
+        'dog': (.58,.094,1.12,26),
+    }[style]
     specs = {
-        'idle': (60, True), 'walk': (26, True), 'attack': (27, False), 'skill': (38, False),
+        'idle': (60, True), 'walk': (walk_time, True), 'attack': (27, False), 'skill': (38, False),
         'hit': (19, False), 'death': (36, False), 'summon': (42, False),
-        'capture': (43, False), 'appear': (32, False), 'caught': (34, False),
+        'capture': (43, False), 'appear': (32, False), 'caught': (34, False), 'evolve': (63, False),
     }
     scene = bpy.context.scene
     scene.render.fps = 30
@@ -291,11 +296,11 @@ def animate(rig, style):
                         rotation[2] = (.09 if bird else .19)*wave * side
                 if clip == 'walk':
                     if name.startswith(('Front', 'Back')):
-                        rotation[0] = (.54 if not bird else .38)*wave*side*(-1 if name.startswith('Back') else 1)
+                        rotation[0] = gait*wave*side*(-1 if name.startswith('Back') else 1)
                         if bird and name.startswith('Front'):
                             rotation[2] = .46*wave*side
                     if name == 'Body':
-                        position[1] = .09*abs(wave)
+                        position[1] = lift*abs(wave)
                         rotation[2] = .045*wave
                     if name == 'Head':
                         rotation[0] = .11*wave
@@ -304,7 +309,7 @@ def animate(rig, style):
                 if clip in ('attack', 'skill', 'summon', 'capture'):
                     strike = math.sin(t*TAU - .55) + math.sin(.55)
                     if name == 'Body':
-                        rotation[0] = (.25 if clip == 'attack' else -.16)*strike
+                        rotation[0] = (.25 if clip == 'attack' else -.16)*strike*strike_gain
                         position[1] = (.11 if clip == 'attack' else .14)*beat
                         position[2] = -.20*beat if clip == 'attack' else 0
                     if name == 'Head':
@@ -333,6 +338,22 @@ def animate(rig, style):
                         rotation[0] = .55*fall*side
                     if name == 'Head':
                         rotation[0] = -.45*fall
+                if clip == 'evolve':
+                    gather = math.sin(math.pi*min(1,t/.44))**2 if t < .44 else 0
+                    reveal = math.sin(math.pi*min(1,max(0,(t-.28)/.72)))**2
+                    settle = soft(.24,.64,t)
+                    if name == 'Body':
+                        position[1] = .64*reveal - .16*gather
+                        rotation[1] = TAU*settle
+                        rotation[0] = .19*gather - .16*reveal
+                        scale = [ .16+.84*settle ] * 3
+                    if name == 'Head':
+                        rotation[0] = .19*gather - .44*reveal
+                    if name.startswith('Front'):
+                        rotation[2] = side*(.99 if bird else .57)*reveal
+                        rotation[0] = .35*gather - .46*reveal
+                    if name == 'Tail':
+                        rotation[2] = .68*reveal
                 if clip in ('appear', 'caught'):
                     grow = t*t*(3-2*t)
                     if name == 'Body':
@@ -842,6 +863,31 @@ def world():
     lump('Still spring water',sx,sz,.026,1.22,.82,.033,water)
     for j in range(5):
         lump('Moon quartz',sx-.5+j*.22,sz+.28,.17,.089,.059,.22,rune)
+
+    # A carved market stall and the low creek, positioned beside their map markers.
+    shop = locations['market']
+    creek = locations['creek']
+    sx,sz=shop['x'],shop['z']+3.0
+    cloth = material('Faded ochre linen','93693c')
+    timber = material('Oil-rubbed rowan','604a3a')
+    for dx in (-.93,.93):
+        for dz in (-.45,.45):
+            loft('Stall post with carved knots', [(p(sx+dx,sz+dz,-.10),.10,.105),
+                (p(sx+dx+.022,sz+dz,.82),.085,.079),(p(sx+dx-.022,sz+dz,1.98),.070,.068)],timber,11,.10,steps=3)
+    loft('Counter hewn from rowan', [(p(sx,sz,.63),.95,.52),(p(sx,sz,.76),.99,.54)],timber,22,.055)
+    roof = [p(sx+(i/21-.5)*2.55,sz+(j/5-.5)*1.75, 1.94+math.sin(j/5*math.pi)*.36-.07*math.sin(i*.74+j*.72))
+            for j in range(6) for i in range(22)]
+    roof_faces = [(a,a+22,a+23,a+1) for j in range(5) for i in range(21) for a in [j*22+i]]
+    roof_mesh = mesh('Linen awning with draped hem',roof,roof_faces,[cloth])
+    activate(roof_mesh)
+    solid = roof_mesh.modifiers.new('Woven canopy thickness','SOLIDIFY')
+    solid.thickness=.024
+    bpy.ops.object.modifier_apply(modifier=solid.name)
+    cx,cz=creek['x']-1.6,creek['z']-4.2
+    for j in range(18):
+        a=TAU*j/18
+        lump('Creekbank rubble',cx+2.05*math.cos(a),cz+.65*math.sin(a),.03,.31,.24,.18,moss if j%3==0 else rock)
+    lump('Shallow creek water',cx,cz,.005,2.02,.61,.037,water)
 
     # Batch static meshes across the clearing for a single draw per material.
     groups = {}
