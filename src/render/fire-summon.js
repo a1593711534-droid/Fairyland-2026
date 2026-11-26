@@ -56,11 +56,12 @@ const mantleVertex = /* glsl */ `
     float peak = (time-.74)/.28;
     float flare = 1. + .27 * exp(-peak*peak);
     altitude = h;
-    float r = 1. + .11*sin(phase*3. + h*9. - time*4.)
-                 + .075*sin(phase*5. - h*15. + time*6. + layer);
+    float r = 1. + .16*sin(phase*3. + h*10. - time*4.)
+                 + .095*sin(phase*5. - h*15. + time*6. + layer);
     p.xz *= flare*r*mix(.59,1.,breath);
     p.xz += vec2(sin(h*4.1+time*2.),cos(h*4.1+time*2.)) * h*h*.22;
-    p.y = (position.y + 1.55) * mix(.23,1.,rise) + .022;
+    float lift = .18*sin(phase*4. + h*11. - time*9.)*h*h;
+    p.y = (position.y + 1.55) * mix(.19,1.27,rise) + lift + .022;
     field = vec3(p.x, h, p.z);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.);
   }
@@ -80,10 +81,12 @@ const mantleFragment = /* glsl */ `
     float roll = texture2D(flowMap,vec2(u,flow*.74+layer*.39)).r;
     float tongues = texture2D(flowMap,vec2(3.*u + roll*.26,flow+roll*.67)).r;
     float wave = .5 + .5*sin(4.*a + roll*5.2 - h*6.1);
-    float taper = .24 + h*.15 + .156*h*h;
-    float fieldValue = .59*roll + .33*tongues + .25*wave;
+    float spiral = .5+.5*cos(2.0*a + h*10.6 + time*2.1);
+    float taper = mix(.22, .35, smoothstep(.17,.77,h))
+                  + .155*h*h - .113*pow(spiral,3.);
+    float fieldValue = .56*roll + .32*tongues + .24*wave;
     float flame = smoothstep(taper,taper+.22,fieldValue);
-    float tip = .45 + .40*tongues + .14*wave;
+    float tip = .48 + .30*tongues + .25*pow(wave,2.);
     float cut = smoothstep(.0,.073,h) * (1.-smoothstep(tip-.23,tip,h));
     float envelope = smoothstep(.01,.23,time) * (1.-smoothstep(1.03,1.71,time));
     float heat = clamp(flame*(.98-h*.54)+tongues*.17-.018,0.,1.);
