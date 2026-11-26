@@ -91,7 +91,10 @@ export async function applySurfaces(scene) {
           if (color) material.map = color
           material.normalMap = normal
           material.normalScale.setScalar(bump)
-          if (roughness) material.roughnessMap = roughness
+          if (roughness) {
+            material.roughnessMap = roughness
+            if (normalOnly) material.roughness = name === 'scales' ? .88 : .98
+          }
           material.needsUpdate = true
         }).catch(() => {}))
     }
