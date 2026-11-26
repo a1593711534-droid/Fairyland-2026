@@ -1,9 +1,9 @@
-name: Verify prototype
+name: Verify and deploy Fairyland
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, fairyland-playtest]
   workflow_dispatch:
 
 permissions:
@@ -27,3 +27,29 @@ jobs:
         with:
           name: fairyland-2026
           path: dist/
+      - name: Package the GitHub Pages site
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: fairyland-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
