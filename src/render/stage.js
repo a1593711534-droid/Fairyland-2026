@@ -157,6 +157,7 @@ export class Stage {
   remove(id) {
     const unit = this.units.get(id)
     if (!unit) return
+    unit.travel?.resolve()
     unit.mixer?.stopAllAction()
     this.actors.remove(unit.pivot)
     this.units.delete(id)
@@ -188,16 +189,20 @@ export class Stage {
 
   move(actor, points, reduced) {
     const unit = this.units.get(actor)
-    if (!unit) return 0
+    if (!unit) return Promise.resolve()
+    unit.travel?.resolve()
+    unit.travel = null
     const cost = points.slice(1).reduce((sum, point, i) => sum + distance(points[i], point), 0)
     if (cost < .001 || reduced) {
       const finish = points.at(-1)
       if (finish) unit.pivot.position.set(finish.x, 0, finish.z)
-      return 0
+      this.play(actor, 'idle', false)
+      return Promise.resolve()
     }
     this.play(actor, 'walk', false)
-    unit.travel = { points, i: 1, speed: this.mode === 'world' ? 13 : 10 }
-    return cost / unit.travel.speed * 1000
+    return new Promise(resolve => {
+      unit.travel = { points, i: 1, speed: this.mode === 'world' ? 13 : 10, resolve }
+    })
   }
 
   tickTravel(unit, dt) {
@@ -220,6 +225,7 @@ export class Stage {
     }
     unit.travel = null
     this.play(unit.id, 'idle', false)
+    move.resolve()
   }
 
   project(pos, height = 0) {
@@ -270,7 +276,10 @@ export class Stage {
     const release = () => { this.drag = null }
     this.canvas.addEventListener('pointerup', release)
     this.canvas.addEventListener('pointercancel', release)
-    this.canvas.addEventListener('pointerleave', () => this.clearHover())
+    this.canvas.addEventListener('pointerleave', () => {
+      this.clearHover()
+      this.callbacks.hover(null)
+    })
     this.canvas.addEventListener('click', event => {
       if (this.mode === 'battle') {
         const point = this.worldPoint(event)

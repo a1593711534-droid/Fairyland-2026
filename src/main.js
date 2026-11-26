@@ -370,7 +370,12 @@ function refreshMarks() {
 }
 
 function stageHover(pos) {
-  if (!pos || busy || modal || scene !== 'battle' || game.battle.result) return
+  if (!pos) {
+    const label = document.querySelector('#preview')
+    if (label) label.textContent = ''
+    return
+  }
+  if (busy || modal || scene !== 'battle' || game.battle.result) return
   const b = game.battle
   const actor = active(b)
   if (actor.team !== 'ally') return
@@ -438,7 +443,7 @@ async function animate(events) {
     const target = pointOf(e.target)
     if (e.type === 'move') {
       sound('move')
-      await wait(stage.move(e.actor, e.points, settings.reduced) + 65)
+      await stage.move(e.actor, e.points, settings.reduced)
     }
     if (e.type === 'cast') {
       stage.face(e.actor, target)
@@ -535,7 +540,7 @@ async function walkTo(key) {
   const from = pivot ? { x: pivot.x, z: pivot.z } : waypoints[game.world]
   const end = waypoints[key]
   const path = router(from, movementBlocks([], null))(end)
-  await wait(stage.move('map-hero', path?.points ?? [from, end], settings.reduced) + 100)
+  await stage.move('map-hero', path?.points ?? [from, end], settings.reduced)
   if (token !== selectWorldToken || scene !== 'world') return
   busy = false
   game.world = key
