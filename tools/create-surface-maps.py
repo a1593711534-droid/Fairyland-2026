@@ -53,8 +53,10 @@ if __name__=='__main__':
     detail=np.asarray(ImageOps.grayscale(rock),dtype=np.float32)/127.5-1
     rng=np.random.default_rng(52915)
     coarse, mid, fine=(field(rng,f) for f in (9,26,76))
-    ground=.57*coarse+.31*mid+.21*fine+.18*detail
-    paint('soil',ground,(78,75,44),(189,175,121),4.9)
+    grit = field(rng,147)
+    pebbles = np.maximum(0,mid*.52+fine*.45+grit*.23-.19)**2
+    ground=.39*coarse+.25*mid+.31*fine+.15*detail+.51*pebbles
+    paint('soil',ground,(104,99,64),(182,171,127),2.65)
     x,y=np.meshgrid(np.linspace(0,math.tau,SIZE,endpoint=False), np.linspace(0,math.tau,SIZE,endpoint=False))
     ribs=.345*np.sin(x*35+2.8*coarse+.5*np.sin(y*4))+.19*np.sin(x*59+2.7*mid)
     bark=ribs+.24*coarse+.27*mid+.23*detail
@@ -70,10 +72,13 @@ if __name__=='__main__':
     scale_y = (row*16)%1
     keel = np.sin(math.pi*scale_y)**.72 * np.cos(math.pi*scale_x)**1.7
     rim = np.exp(-((scale_y-.22-.77*scale_x**2)/.065)**2)
-    write(normals(keel*.28-rim*.096 + fine*.038,3.4),'scales','normal',85)
+    write(normals(keel*.21-rim*.089 + fine*.028,2.7),'scales','normal',85)
+    write(image(151 - keel*17 + rim*15 + fine*9),'scales','rough',80)
     nap = np.cos(x*94+.95*np.sin(y*7)+2.6*mid)
     fine_nap = np.cos(x*143+np.sin(y*11)+1.6*fine)
-    write(normals(nap*.115+fine_nap*.039 + .07*mid,1.8),'fur','normal',84)
+    write(normals(nap*.087+fine_nap*.029 + .053*mid,1.65),'fur','normal',84)
+    write(image(181 - nap*10 + mid*13),'fur','rough',80)
     rachis = np.cos(x*22+.61*np.sin(y*5))
     barbs = np.cos(y*66 + 2.6*abs(np.sin(x*22)) + .3*mid)
-    write(normals(rachis*.085 + barbs*.071 + .021*fine,1.86),'plume','normal',83)
+    write(normals(rachis*.077 + barbs*.053 + .017*fine,1.62),'plume','normal',83)
+    write(image(151 - rachis*10 + barbs*9 + fine*7),'plume','rough',80)

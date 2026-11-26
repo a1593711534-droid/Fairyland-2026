@@ -183,7 +183,7 @@ button, input, .dialog-panel { pointer-events: auto }
   right: max(15px, 2.4vw);
   bottom: clamp(13px, 3.4vh, 37px);
   display: grid;
-  grid-template-columns: minmax(175px, 235px) 1fr minmax(105px, 152px);
+  grid-template-columns: minmax(152px, 220px) 1fr;
   gap: 13px;
   align-items: end;
 }
@@ -286,7 +286,7 @@ kbd { color: var(--gold-light) }
   .title-content h1 span { margin-left: 9px }
   .world-card { width: min(250px, 46vw); padding: 12px }
   .world-card p, .guide p { font-size: 12px }
-  .battle-footer { grid-template-columns: minmax(120px, 1fr) minmax(87px, .43fr); gap: 6px }
+  .battle-footer { grid-template-columns: minmax(105px, .55fr) minmax(0, 1fr); gap: 6px }
   .toolbar { grid-row: 2; grid-column: 1 / -1 }
   .fighter-line { font-size: 11px }
   .initiative { max-width: 47vw }
@@ -314,10 +314,6 @@ kbd { color: var(--gold-light) }
 .starter-elements .element { min-width: 25px; }
 
 .battle-caption { align-self: end; justify-self: center; max-width: 43rem; padding: 7px 10px; color: #e0dbca; font-size: .75rem; text-align: center; text-shadow: 0 1px 5px #000; }
-.context-box { position: absolute; top: 0; left: 0; z-index: 2; width: min(230px, 56vw); padding: 11px; background: #10211ef4; border: 1px solid #a6a07f70; border-radius: 6px; box-shadow: 0 10px 28px #061311ba; }
-.context-box > strong { display: block; margin: 0 0 7px 2px; color: var(--gold-light); font: 600 14px var(--serif); }
-.context-box > div { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.context-box .action { min-height: 34px; padding: 6px; }
 .plan-summary { display: flex; justify-content: space-between; gap: 8px; color: var(--gold-light); font-size: .82rem; padding: 4px 0; }
 .plan-warning { font-size: .75rem; color: #ffbb94; line-height: 1.65; }
 .inventory-rows { display: grid; gap: 5px; max-height: min(45vh, 360px); overflow: auto; }
@@ -328,12 +324,32 @@ kbd { color: var(--gold-light) }
 .slot-empty { border: 1px dashed var(--line); color: var(--muted); }
 .gold { color: var(--gold-light); }
 .kit-carriers .selected { border-color: var(--gold); }
-.modal-shade.planning { justify-items: end; padding-right: var(--pad); background: linear-gradient(90deg, #09171415, #101e21ad); backdrop-filter: none; }
-.planning .dialog-panel { width: min(385px, 95vw); }
 @media (max-width: 740px) {
-  .battle-caption { grid-row: 2; grid-column: 1 / -1; padding: 1px 5px; }
-  .context-box .action { min-height: 29px; }
+  .battle-caption { padding: 2px 3px 0; font-size: .64rem; }
   .world-screen .topbar { left: 12px; right: 12px; }
   .world-screen .brand { letter-spacing: .09em; gap: 4px; }
 }
-.context-box { pointer-events: auto; }
+
+.battle-control { min-width: 0; justify-self: end; max-width: 100%; }
+.combat-actions {
+  display: flex; justify-content: flex-end; gap: 4px; flex-wrap: wrap;
+  padding: 5px; background: #10211eed; border: 1px solid var(--line); border-radius: 5px;
+}
+.combat-actions .action { min-height: 33px; }
+.summon-dock {
+  position: absolute; right: var(--pad); top: clamp(74px, 17vh, 132px);
+  width: clamp(190px, 23vw, 279px); display: grid; gap: 5px;
+  border: 1px solid var(--line); border-radius: 5px; padding: 8px;
+  background: #10211ef2; box-shadow: 0 10px 28px #061311ba; pointer-events: auto;
+}
+.summon-dock .inventory-rows { max-height: min(45vh, 325px); }
+.summon-dock .dialog-row { padding: 4px 8px; min-height: 27px; margin: 0; }
+.summon-dock .selected { border-color: #b8b0ff; background: #343455; }
+.summon-dock .plan-summary { font-size: .72rem; }
+@media (max-width: 740px) {
+  .combat-actions .action { min-height: 30px; padding: 4px 6px; }
+  .summon-dock { width: min(180px, 30vw); top: 54px; padding: 5px; }
+}
+@media (max-height: 460px) {
+  .summon-dock .inventory-rows { max-height: 28vh; }
+}

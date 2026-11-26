@@ -3,9 +3,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
 import { distance } from '../game/geometry.js'
-import { trailFX } from './effects.js'
-import { EffekseerStage } from './effekseer.js'
-import { applySurfaces, fireflies } from './surfaces.js'
+import { elementalEffect } from './elemental-effects.js'
+import { applySurfaces, fireflies, surfaceTime } from './surfaces.js'
 import { artURL } from './art-url.js'
 import { fireSummon, warmFire } from './fire-summon.js'
 
@@ -79,7 +78,6 @@ export class Stage {
     this.renderer.shadowMap.type = T.PCFShadowMap
     this.renderer.toneMapping = T.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.18
-    this.effekseer = new EffekseerStage(this.renderer)
     this.canvas = this.renderer.domElement
     this.canvas.setAttribute('aria-label', '3D 場景')
     host.append(this.canvas)
@@ -96,8 +94,8 @@ export class Stage {
     const rim = this.rim = new T.DirectionalLight('#9dd7ee', 2.45)
     rim.position.set(9, 8, -15)
     this.scene.add(rim)
-    this.fireLights = Array.from({ length: 2 }, () => new T.PointLight('#ff741d', 0, 6.3, 1.75))
-    this.scene.add(...this.fireLights)
+    this.magicLights = Array.from({ length: 2 }, () => new T.PointLight('#ff741d', 0, 6.3, 1.75))
+    this.scene.add(...this.magicLights)
     this.units = new Map()
     this.actors = new T.Group()
     this.scene.add(this.actors)
@@ -127,6 +125,9 @@ export class Stage {
         object.castShadow = /^(Weathered slate|Alder bark|Silver birch bark|Oil-rubbed rowan)/.test(object.material.name)
       })
     }).catch(error => callbacks.error(error))
+    void Promise.all([this.mapLoaded, asset('canopy')]).then(([, data]) => {
+      this.land?.add(data.scene)
+    }).catch(error => callbacks.error(error))
     this.setMode('menu')
     this.attach()
     requestAnimationFrame(now => this.frame(now))
@@ -135,8 +136,6 @@ export class Stage {
   setMode(mode) {
     if (mode === this.mode) return
     this.mode = mode
-    this.effekseer.clear()
-    if (mode === 'battle' || mode === 'inspect') void this.effekseer.warm()
     if ((mode === 'world' || mode === 'battle') && !this.fireWarm) {
       this.fireWarm = true
       const idle = globalThis.requestIdleCallback ?? globalThis.requestAnimationFrame
@@ -355,16 +354,22 @@ export class Stage {
   }
 
   attach() {
-    this.canvas.addEventListener('contextmenu', event => event.preventDefault())
+    this.canvas.addEventListener('contextmenu', event => {
+      if (event.button === 2 && !event.shiftKey) event.preventDefault()
+    })
     this.canvas.addEventListener('pointerdown', event => {
-      if (event.button !== 2 && event.button !== 1) return
-      this.drag = { x: event.clientX, y: event.clientY, center: event.button === 1 }
+      if (event.shiftKey || (event.button !== 2 && event.button !== 1)) return
+      this.drag = { x: event.clientX, y: event.clientY, center: event.button === 1,
+        pointerId: event.pointerId, moved: false }
       this.canvas.setPointerCapture(event.pointerId)
     })
     this.canvas.addEventListener('pointermove', event => {
       if (this.drag) {
+        if (event.pointerId !== this.drag.pointerId) return
         const dx = event.clientX - this.drag.x
         const dy = event.clientY - this.drag.y
+        if (!this.drag.moved && Math.hypot(dx, dy) < 6) return
+        this.drag.moved = true
         if (this.drag.center) {
           this.view.x = T.MathUtils.clamp(this.view.x - dx * .023, -17, 17)
           this.view.z = T.MathUtils.clamp(this.view.z - dy * .030, -13, 13)
@@ -378,9 +383,18 @@ export class Stage {
       }
       if (this.mode === 'battle') this.pendingPointer = event
     })
-    const release = () => { this.drag = null }
-    this.canvas.addEventListener('pointerup', release)
+    this.canvas.addEventListener('pointerup', event => {
+      if (this.drag?.pointerId !== event.pointerId) return
+      const { moved, center, x, y } = this.drag
+      this.drag = null
+      if (!moved && !center && event.button === 2 && Math.hypot(event.clientX - x, event.clientY - y) < 6)
+        this.callbacks.cancel()
+    })
+    const release = event => {
+      if (this.drag?.pointerId === event.pointerId) this.drag = null
+    }
     this.canvas.addEventListener('pointercancel', release)
+    this.canvas.addEventListener('lostpointercapture', release)
     this.canvas.addEventListener('pointerleave', () => {
       this.pendingPointer = null
       this.clearHover()
@@ -495,14 +509,15 @@ export class Stage {
   }
 
   effect(point, element, type, towards, scale = 1) {
+    const light = this.magicLights.find(light => !light.userData.busy)
     if (type === 'summon' && element === 'fire') {
-      const light = this.fireLights.find(light => !light.userData.fireBusy)
       const fire = fireSummon(this.scene, point, light)
       this.effects.push(fire.advance)
       return fire.ready
     }
-    if (this.effekseer.play(type, element, point, towards, scale)) return
-    this.effects.push(trailFX(this.scene, point, element, type, towards))
+    const effect = elementalEffect(this.scene, point, element, type, towards, scale, light)
+    this.effects.push(effect.advance)
+    return effect.ready
   }
 
   frame(now) {
@@ -528,7 +543,7 @@ export class Stage {
     this.effects = this.effects.filter(tick => tick(dt))
     this.callbacks.frame(this)
     this.motes.material.uniforms.time.value = now / 1000
+    surfaceTime(now / 1000)
     this.renderer.render(this.scene, this.camera)
-    this.effekseer.draw(this.camera, dt)
   }
 }

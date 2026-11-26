@@ -4,29 +4,67 @@ import { artURL } from './art-url.js'
 const loader = new T.TextureLoader()
 const files = new Map()
 const surface = [
-  [/^Meadow soil/, 'soil', .74],
-  [/^Weathered slate/, 'stone', .85, true],
-  [/^Soft lichen/, 'soil', .36],
-  [/(bark|Oil-rubbed rowan)$/, 'bark', .71],
+  [/^Meadow soil/, 'soil', .46],
+  [/^Weathered slate/, 'stone', .60, true],
+  [/^Soft lichen/, 'soil', .28],
+  [/(bark|Oil-rubbed rowan)$/, 'bark', .53],
   [/^(Midnight wool|Russet velvet|Faded ochre linen)/, 'cloth', .52],
   [/^Oiled leather/, 'hide', .54],
-  [/^Coat scales/, 'scales', .39, false, true],
-  [/^Coat fur/, 'fur', .33, false, true],
-  [/^Coat plume/, 'plume', .36, false, true],
+  [/^Coat scales/, 'scales', .36, true, true],
+  [/^Coat fur/, 'fur', .22, true, true],
+  [/^Coat plume/, 'plume', .24, true, true],
 ]
 
-function texture(name, component) {
-  const key = name + '-' + component
+function texture(name, component = '') {
+  const key = component ? name + '-' + component : name
   if (!files.has(key)) {
     files.set(key, loader.loadAsync(artURL('surfaces/' + key + '.webp')).then(tex => {
       tex.flipY = false
       tex.wrapS = tex.wrapT = T.RepeatWrapping
       tex.anisotropy = 4
-      if (component === 'color') tex.colorSpace = T.SRGBColorSpace
+      if (component === 'color' || !component) tex.colorSpace = T.SRGBColorSpace
       return tex
     }).catch(error => { files.delete(key); throw error }))
   }
   return files.get(key)
+}
+
+function foliage(material) {
+  material.visible = false
+  return texture('alder-canopy').then(map => {
+    map.wrapS = map.wrapT = T.ClampToEdgeWrapping
+    material.map = map
+    material.alphaTest = .34
+    material.alphaToCoverage = true
+    material.side = T.DoubleSide
+    material.roughness = .89
+    material.visible = true
+    material.needsUpdate = true
+  })
+}
+
+const waterTime = { value: 0 }
+
+function water(material) {
+  material.onBeforeCompile = shader => {
+    shader.uniforms.waterTime = waterTime
+    shader.vertexShader = 'varying vec2 localWater;\n' + shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nlocalWater = uv;')
+    shader.fragmentShader = 'varying vec2 localWater;\nuniform float waterTime;\n' +
+      shader.fragmentShader.replace('#include <color_fragment>', `
+        #include <color_fragment>
+        vec2 p = localWater * 3.28;
+        float a = sin(p.x * 3.0 + p.y * 1.9 - waterTime * .97);
+        float b = sin(p.x * .77 - p.y * 2.52 + waterTime * 1.27);
+        float caustic = pow(max(0., a*.53 + b*.59), 7.);
+        diffuseColor.rgb = diffuseColor.rgb * (.83 + .13*a + .12*b) + caustic*vec3(.12,.23,.21);
+      `)
+  }
+  material.needsUpdate = true
+}
+
+export function surfaceTime(time) {
+  waterTime.value = time
 }
 
 export async function applySurfaces(scene) {
@@ -34,8 +72,18 @@ export async function applySurfaces(scene) {
   scene.traverse(object => {
     if (!object.isMesh || !object.geometry.attributes.uv) return
     for (const material of [object.material].flat()) {
+      if (applied.has(material)) continue
+      if (material.name === 'Alder foliage atlas') {
+        applied.set(material, foliage(material).catch(() => {}))
+        continue
+      }
+      if (material.name === 'Moonstone pool') {
+        water(material)
+        applied.set(material, null)
+        continue
+      }
       const match = surface.find(([pattern]) => pattern.test(material.name))
-      if (!match || applied.has(material)) continue
+      if (!match) continue
       const [, name, bump, rough, normalOnly] = match
       const colors = normalOnly ? null : texture(name, 'color')
       applied.set(material, Promise.all([colors, texture(name, 'normal'), rough ? texture(name, 'rough') : null])

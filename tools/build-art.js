@@ -8,7 +8,10 @@ mkdirSync(cache, { recursive: true })
 writeFileSync(new URL('layout.json', cache), JSON.stringify({ obstacles, waypoints }))
 
 const filter = process.argv.slice(2)
-const modelNames = filter.flatMap(name => ['world', 'hero'].includes(name) ? [name] : [name, name + '-evolved'])
+const modelNames = filter.flatMap(name => {
+  if (name === 'world') return ['world', 'canopy']
+  return name === 'hero' ? [name] : [name, name + '-evolved']
+})
 const cwd = fileURLToPath(new URL('..', import.meta.url))
 const options = { cwd, stdio: 'inherit' }
 execFileSync('blender', ['-b', '-t', '2', '--python-exit-code', '1', '--python', 'tools/sculpt.py',

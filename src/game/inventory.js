@@ -8,12 +8,16 @@ export function inventory(keys = []) {
 export const startingInventory = kind => inventory(starterItems[kind === 'hero' ? 'hero' : 'creature'])
 export const equipmentBonus = (unit, stat) => (unit.inventory ?? []).reduce((sum, key) => sum + (items[key]?.stats?.[stat] ?? 0), 0)
 
-export function placeItem(unit, key) {
+function capacityProblem(unit, key) {
   if (!unit || !items[key]) return '找不到這件物品。'
   if (unit.inventory.includes(key)) return '同一角色只能攜帶一件同名物品。'
-  const index = unit.inventory.indexOf(null)
-  if (index < 0) return '三格物品欄已滿。'
-  unit.inventory[index] = key
+  return unit.inventory.includes(null) ? null : '三格物品欄已滿。'
+}
+
+export function placeItem(unit, key) {
+  const problem = capacityProblem(unit, key)
+  if (problem) return problem
+  unit.inventory[unit.inventory.indexOf(null)] = key
   return null
 }
 
@@ -39,10 +43,16 @@ export function consume(unit, key, maxHP) {
   return null
 }
 
-export function purchase(game, unit, key) {
+export function purchaseProblem(game, unit, key) {
   const item = items[key]
   if (!item || game.gold < item.price) return '金幣不足。'
-  const problem = placeItem(unit, key)
-  if (!problem) game.gold -= item.price
-  return problem
+  return capacityProblem(unit, key)
+}
+
+export function purchase(game, unit, key) {
+  const problem = purchaseProblem(game, unit, key)
+  if (problem) return problem
+  placeItem(unit, key)
+  game.gold -= items[key].price
+  return null
 }

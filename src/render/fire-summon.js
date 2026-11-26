@@ -5,7 +5,7 @@ const duration = 2.16
 const tau = Math.PI * 2
 
 let flowMap
-function noiseTexture() {
+export function flowTexture() {
   if (flowMap) return flowMap
   const size = 128
   const pixels = new Uint8Array(size * size)
@@ -93,7 +93,9 @@ const mantleFragment = /* glsl */ `
     vec3 base = mix(vec3(.24,.009,.001),vec3(1.0,.102,.004),smoothstep(.13,.54,heat));
     base = mix(base,vec3(1.0,.44,.036),smoothstep(.54,.88,heat));
     base = mix(base,vec3(1.,.92,.52),smoothstep(.87,1.,heat)*(.94-h*.60));
-    float alpha = flame*cut*envelope*(.31 + .32*pow(wave,2.)) * (1.0 - .14*layer);
+    float filaments = texture2D(flowMap,vec2(6.*u + tongues*.23, flow*1.51 + roll*.7)).r;
+    float alpha = flame*cut*envelope*(.22 + .29*pow(wave,2.) + .18*smoothstep(.36,.69,filaments)) *
+                  (1.0 - .14*layer);
     gl_FragColor = vec4(base,alpha);
     #include <colorspace_fragment>
   }
@@ -123,7 +125,7 @@ const smokeFragment = /* glsl */ `
 
 function shell(top, bottom, layer, fragment) {
   return new T.Mesh(new T.CylinderGeometry(top, bottom, 3.1, 46, 20, true), new T.ShaderMaterial({
-    uniforms: { time: { value: 0 }, layer: { value: layer }, flowMap: { value: noiseTexture() } },
+    uniforms: { time: { value: 0 }, layer: { value: layer }, flowMap: { value: flowTexture() } },
     vertexShader: mantleVertex,
     fragmentShader: fragment,
     side: T.DoubleSide,
@@ -135,7 +137,7 @@ function shell(top, bottom, layer, fragment) {
 
 function heatOnGround() {
   const disk = new T.Mesh(new T.PlaneGeometry(5.6, 5.6), new T.ShaderMaterial({
-    uniforms: { time: { value: 0 }, flowMap: { value: noiseTexture() } },
+    uniforms: { time: { value: 0 }, flowMap: { value: flowTexture() } },
     transparent: true, depthWrite: false, toneMapped: false,
     blending: T.AdditiveBlending,
     vertexShader: /* glsl */ `
@@ -241,7 +243,8 @@ export function fireSummon(scene, point, light) {
   group.position.set(point.x, 0, point.z)
   const { meshes, sparks } = fireMeshes()
   if (light) {
-    light.userData.fireBusy = true
+    light.userData.busy = true
+    light.color.set('#ff741d')
     light.position.set(point.x,1.24,point.z)
   }
   group.add(...meshes)
@@ -259,7 +262,7 @@ export function fireSummon(scene, point, light) {
     if (time >= duration) {
       if (light) {
         light.intensity = 0
-        light.userData.fireBusy = false
+        light.userData.busy = false
       }
       scene.remove(group)
       for (const mesh of meshes) {

@@ -242,9 +242,21 @@ def carve_sockets(obj, frames, depth):
     obj.data.update()
 
 
-def inset_eye(surface, frame, shell, skin_color, iris, animal=True, slit=False):
+EYE_STYLES = {
+    'turtle': (.236,.106,.035,.18,1.34,2.94,3.0,.45,(.20,.53,.37),(.108,.138,.115)),
+    'dino':   (.231,.133,.36,.43,4.45,1.03,1.24,.85,(.88,.30,.047),(.18,.093,.059)),
+    'cat':    (.265,.139,.30,.63,5.88,.97,1.14,.83,(.55,.67,.111),(.22,.23,.115)),
+    'bird':   (.182,.189,.08,.07,1.60,1.59,1.43,.64,(.60,.244,.705),(.172,.084,.241)),
+    'mouse':  (.210,.194,.11,.06,.93,1.01,1.45,.16,(.295,.147,.080),(.169,.094,.087)),
+    'dog':    (.244,.135,.02,.27,1.65,1.37,1.64,.83,(.19,.53,.88),(.52,.60,.66)),
+    'hero':   (.0,.0,.0,.31,2.16,1.74,2.0,.82,(.34,.19,.068),(.61,.57,.50)),
+}
+
+
+def inset_eye(surface, frame, shell, skin_color, species):
     """Contour each cornea against the final sculpt, with pigment on a single surface."""
     cx, cz, width, height, slant = frame
+    _,_,_,almond,pupil_x,pupil_y,iris_x,iris_gain,iris,white = EYE_STYLES[species]
     count, rings = 40, 15
     verts, faces, colors = [], [], []
     for i in range(rings+1):
@@ -253,23 +265,26 @@ def inset_eye(surface, frame, shell, skin_color, iris, animal=True, slit=False):
             angle = TAU*j/count
             u, v = r*math.cos(angle),r*math.sin(angle)
             x = cx+width*u
-            z = cz+height*v*(.72+.28*abs(math.sin(angle)))+width*u*slant
+            z = cz+height*v*(1-almond+almond*abs(math.sin(angle)))+width*u*slant
+            z -= height*.12*u*u*(1 if species=='turtle' else 0)
             hit, _, _, _ = surface.ray_cast((x,-4,z),(0,1,0))
             if hit is None:
                 raise ValueError('Eye contour lies outside the sculpt')
             depth = .002 + width*.13*(1-r*r)
             verts.append((x,hit.y-depth,z))
-            iris_r = math.hypot((u+.065)*(1.13 if animal else 2.0),(v+.015)*1.04)
-            pupil_r = math.hypot((u+.065)*(3.6 if slit else 2.16),(v+.015)*(1.08 if slit else 1.74))
+            iris_r = math.hypot((u+.065)*iris_x,(v+.015)*1.04)
+            pupil_r = math.hypot((u+.065)*pupil_x,(v+.015)*pupil_y)
             rim = soft(.54,.82,iris_r)
-            color = blend(iris,(.012,.017,.023),rim*.82)
+            color = blend((.025,.020,.024),iris,iris_gain)
+            color = blend(color,(.012,.017,.023),rim*.82)
             rays = .50+.50*math.sin(math.atan2(v+.015,u+.065)*19)
             color = blend(color,(.62,.48,.27),rays*.17*(1-rim))
             color = blend((.006,.009,.014),color,soft(.51,.69,pupil_r))
-            white = (.61,.57,.50) if not animal else (.21,.22,.20)
             color = blend(color,white,soft(.80,.99,iris_r))
-            color = [c*(1-soft(.19,.94,v)*.52) for c in color]
-            shine = exp(-((u+.30)/.103)**2-((v-.38)/.137)**2)
+            shade = .74 if species=='turtle' else .45
+            color = [c*(1-soft(.19,.94,v)*shade) for c in color]
+            gloss = .17 if species=='mouse' else .096
+            shine = exp(-((u+.30)/gloss)**2-((v-.38)/(gloss*1.2))**2)
             pin = exp(-((u-.32)/.061)**2-((v+.28)/.104)**2)
             color = blend(color,(.87,.96,1),max(shine,pin*.45))
             skin = skin_color(hit)
@@ -517,11 +532,11 @@ COLORS = {
 }
 
 
-def export(name, animations=False):
+def export(name, animations=False, selected=False):
     out = OUT / (name + '.glb')
     bpy.ops.export_scene.gltf(
         filepath=str(out), export_format='GLB', export_animations=animations,
-        export_animation_mode='NLA_TRACKS',
+        export_animation_mode='NLA_TRACKS', use_selection=selected,
     )
 
 
@@ -529,7 +544,7 @@ def animal(kind, evolved):
     reset()
     base, dark, accent = COLORS[kind]
     surface_type = 'scales' if kind in ('dino','turtle') else 'plume' if kind=='bird' else 'fur'
-    skinmat = material('Coat '+surface_type, base, .66 if surface_type=='scales' else .81)
+    skinmat = material('Coat '+surface_type, base, {'scales': .55, 'plume': .63, 'fur': .72}[surface_type])
     darkmat = material('Markings', dark)
     lightmat = material('Crest', accent, .53)
     cornea = material('Inset cornea', 'ffffff', .26)
@@ -594,9 +609,10 @@ def animal(kind, evolved):
             if kind in ('bird','turtle','dino','dog'):
                 for toe in (-1,0,1):
                     parts.append(ell('Webbed toe', (s*1.1+toe*leg*.41,y-.235,.064),(.038,.087,.043)))
-        rise = .34 if kind=='dino' else .23 if kind in ('cat','bird') else .06
-        frames.append((side*headw*.56,headz+headw*.16,headw*.235,
-                       headw*(.177 if kind in ('dog','mouse','turtle') else .157),side*rise))
+        width, aperture, rise, *_ = EYE_STYLES[kind]
+        offset = .58 if kind in ('bird','turtle') else .54
+        frames.append((side*headw*offset,headz+headw*.16,headw*width,
+                       headw*aperture,side*rise))
         if kind in ('cat','dog','mouse'):
             ear = .29 if kind == 'cat' else .43 if kind == 'dog' else .23
             if kind == 'mouse':
@@ -672,7 +688,7 @@ def animal(kind, evolved):
     body = fuse(parts, 'Sculpted continuous anatomy', skinmat, .024)
     body = retopology(body, kind, evolved, skinmat)
     carve_sockets(body,frames,.030 if kind=='turtle' else .039)
-    uv_project(body,.72)
+    uv_project(body,1.02 if surface_type=='fur' else .89)
 
     def coat(v):
         base = skinmat.diffuse_color[:3]
@@ -691,8 +707,8 @@ def animal(kind, evolved):
             back += soft(.18,.55,dapple)*.22
         style = blend(base, shade, back*.62)
         style = blend(style, accent, fringe)
-        ridge = max(0, math.sin(v.y*29 + v.z*36 + v.x*17 + dapple*4))**7
-        texture = .20 if kind in ('turtle','dino') else .11
+        ridge = max(0, math.sin(v.y*19 + v.z*25 + v.x*11 + dapple*1.8))**7
+        texture = .12 if kind in ('turtle','dino') else .06
         style = blend(style, accent, ridge*texture*(.35+back*.55))
         style = blend(style,shade,.64*soft(.58,.98,v.y)*soft(chest*.68,chest*.91,v.z))
         front = soft(-heady+headw*.36,-heady+headw*.68,-v.y)
@@ -715,14 +731,12 @@ def animal(kind, evolved):
             seam_z = headz-.067 + (v.y-heady+.31)*.21
         seam = exp(-((v.z-seam_z)/.018)**2)*(1-soft(headw*.27,headw*.64,abs(v.x)))
         style = blend(style,shade,front*seam*.86)
-        return [value*grain(v, 38, .20)*(1+scale*dapple*.06) for value in style]
+        return [value*grain(v, 38, .062)*(1+scale*dapple*.035) for value in style]
 
     pigment(body, skinmat, coat)
     surface = face_surface(body)
-    iris = {'turtle':(.16,.48,.41),'dino':(.90,.43,.084),'cat':(.41,.60,.13),
-        'bird':(.24,.57,.68),'mouse':(.58,.35,.14),'dog':(.36,.55,.78)}[kind]
     for frame in frames:
-        fix(inset_eye(surface,frame,cornea,coat,iris,slit=kind in ('cat','dino')),'Head')
+        fix(inset_eye(surface,frame,cornea,coat,kind),'Head')
     rig = skeleton(kind, height, hind_y, front_y, span, bird=kind=='bird')
     def body_weights(v):
         bone = 'Body'
@@ -859,7 +873,7 @@ def person():
     fix(face,'Head')
     surface = face_surface(face)
     for frame in frames:
-        fix(inset_eye(surface,frame,cornea,complexion,(.34,.19,.068),animal=False),'Head')
+        fix(inset_eye(surface,frame,cornea,complexion,'hero'),'Head')
     ell('Scalp hair mass',(-.010,.005,2.382),(.172,.191,.156),hair,'Head',-.08)
     for j in range(11):
         x=-.130+j*.024
@@ -944,7 +958,7 @@ def world():
     water = material('Moonstone pool','4d9094',.27,.18,.07)
     rune = material('Moon runes','a9dcce',.32,0,.42)
     strata = material('Weathered slate with lichens','ffffff',.81)
-    canopy = material('Alder foliage','ffffff',.88)
+    canopy = material('Alder foliage atlas','ffffff',.84)
 
     def paint_mesh(mat, attribute):
         node = mat.node_tree.nodes.new('ShaderNodeVertexColor')
@@ -988,12 +1002,15 @@ def world():
         broad = noise.fractal(Vector((x*.24,z*.18,.61)),.85,2,3)
         grain = noise.noise_vector(Vector((x*1.9,z*1.9,1.31)))[0]
         trail = max(0,1-(track(x,z)+grain*.17)/1.7)**.82
-        f = broad*.055+grain*.026
+        seam = noise.noise_vector(Vector((x*.34,z*.31,2.4)))[0]
+        f = broad*.034+grain*.018
         shade = max((exp(-((x-b['x']-.18)**2+(z-b['z']+.18)**2)/(b['radius']*.78)**2)
                      for b in layout['obstacles']), default=0)
         light = 1 - .41*shade
-        colors.data[i].color = ((.23 + f*1.8 + trail*.245)*light,(.32 + f*1.8 + trail*.105)*light,
-                                (.175 + f*1.1 + trail*.073)*light,1)
+        soil_blend = soft(.25,.64,trail+.39*seam)
+        green = (.235+f*1.5,.342+f*1.7,.185+f*1.1)
+        path = (.409+f*1.7,.332+f*1.3,.206+f*.98)
+        colors.data[i].color = (*(v*light for v in blend(green,path,soil_blend)),1)
 
     def lump(name,x,z,h,sx,sz,sy,mat=rock,rows=9,sides=16):
         return ovoid(name,p(x,z,h),(sx,sz,sy),mat,uniform(-.21,.21),.29,rows,sides)
@@ -1031,30 +1048,26 @@ def world():
             size = uniform(.12,.34)
             lump('Eroded fragments',x+r*.83*math.cos(angle),z+r*.83*math.sin(angle),.10,size,size,.19)
 
-    leaf_verts, leaf_faces, leaf_colors = [], [], []
+    leaf_verts, leaf_faces, leaf_colors, leaf_uv = [], [], [], []
 
     def leaf_spray(x,z,y,spread,layer):
-        color = leaves[layer%len(leaves)].diffuse_color[:3]
-        for k in range(34):
-            a = k*2.399963 + layer*.6
-            azimuth = a + uniform(-.39,.39)
-            slope = uniform(-.68,.63)
-            r = spread * math.sqrt(uniform(.02,1.0))
-            a0 = Vector(p(x+math.cos(a)*r,z+math.sin(a)*r,y+uniform(-.25,.39)*spread))
-            forward = Vector((math.cos(azimuth),math.sin(azimuth),slope))
-            across = Vector((-forward.y,forward.x,uniform(-.23,.23)))
-            length = uniform(.31,.67)*spread
-            width = length * uniform(.26,.48)
-            tip = a0 + forward*length - Vector((0,0,length*.15))
-            shoulder = a0+forward*(length*.39)
+        center = Vector(p(x,z,y))
+        base_angle = layer*2.399963
+        green = uniform(.81,1.0)
+        for k in range(3):
+            angle = base_angle+k*math.pi/3
+            forward = Vector((math.cos(angle),math.sin(angle),.09*k))
+            tilt = (.22,.54,.87)[k]
+            across = Vector((-math.sin(angle)*tilt,math.cos(angle)*tilt,1-tilt*.68))
+            width,height = spread*uniform(1.19,1.45),spread*uniform(.92,1.31)
             base = len(leaf_verts)
-            leaf_verts.extend([a0,shoulder-across*width,shoulder+across*width,
-                               shoulder+Vector((0,0,.19*width)),tip])
-            leaf_faces.extend([(base,base+1,base+3),(base,base+3,base+2),
-                               (base+3,base+1,base+4),(base+3,base+4,base+2)])
-            brightness = uniform(.66,1.30)
-            for tint in (.67,.82,.91,1.20,1.06):
-                leaf_colors.append([min(1,t*brightness*tint) for t in color])
+            offset = uniform(-.16,.16)
+            for u,v in ((-1,-1),(1,-1),(1,1),(-1,1)):
+                leaf_verts.append(center+forward*width*u+across*height*v+Vector((0,0,offset)))
+                leaf_uv.append(((u+1)*.5,(v+1)*.5))
+                light = .72+.14*(v+1)
+                leaf_colors.append((min(1,green*light*.87),min(1,green*light),min(1,green*light*.91)))
+            leaf_faces.append(tuple(base+i for i in range(4)))
 
     for i in range(57):
         angle=uniform(0,TAU)
@@ -1088,7 +1101,10 @@ def world():
             for k in range(2):
                 leaf_spray(bx+uniform(-.57,.57),bz+uniform(-.57,.57),by+uniform(-.28,.48),
                            uniform(.83,1.41),i+j+k)
-    foliage = mesh('Individual folded leaves across the crowns',leaf_verts,leaf_faces,[canopy])
+    foliage = mesh('Leaf atlas across wind-oriented branches',leaf_verts,leaf_faces,[canopy])
+    mapping = foliage.data.uv_layers.new(name='Alder leaf atlas')
+    for link in foliage.data.loops:
+        mapping.data[link.index].uv=leaf_uv[link.vertex_index]
     pigments = foliage.data.color_attributes.new('Leaf pigment','BYTE_COLOR','POINT')
     for i, color in enumerate(leaf_colors):
         pigments.data[i].color = (*color,1)
@@ -1239,7 +1255,11 @@ def world():
         for obj in objs:
             obj.select_set(True)
         bpy.ops.object.join()
-    export('world')
+    bpy.ops.object.select_all(action='SELECT')
+    foliage.select_set(False)
+    export('world', selected=True)
+    activate(foliage)
+    export('canopy', selected=True)
 
 
 if __name__ == '__main__':

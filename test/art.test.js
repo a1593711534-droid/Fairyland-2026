@@ -43,6 +43,18 @@ test('the hero and all creature forms have rigged, vertex-painted inset eyes', a
   }
 })
 
+test('forest crowns use a UV-mapped atlas with a bounded triangle count', async () => {
+  const model = await modelJson('canopy')
+  const material = model.materials.findIndex(entry => entry.name === 'Alder foliage atlas')
+  const leaves = model.meshes.flatMap(mesh => mesh.primitives).filter(primitive => primitive.material === material)
+  assert.ok(leaves.length)
+  assert.ok(leaves.every(primitive => primitive.attributes.TEXCOORD_0 !== undefined))
+  const triangles = leaves.reduce((sum, primitive) => sum + model.accessors[primitive.indices].count / 3, 0)
+  assert.ok(triangles >= 3000 && triangles < 4000, triangles)
+  const atlas = await readFile(new URL('surfaces/alder-canopy.webp', art))
+  assert.equal(atlas.toString('ascii', 8, 12), 'WEBP')
+})
+
 test('published Effekseer effects cover every combination used in battle', async () => {
   for (const element of Object.keys(elements)) {
     for (const kind of ['cast', 'impact', 'summon', 'capture', 'evolve']) {
