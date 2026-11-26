@@ -4,14 +4,18 @@ from mathutils import Quaternion, Vector
 
 
 CLIPS = {
-    'hero': {'idle_watch': 134, 'idle_check_wand': 147},
-    'dog': {'idle_wag': 104, 'idle_sit': 283, 'idle_listen': 139},
-    'cat': {'idle_groom': 188, 'idle_crouch': 208, 'idle_tail': 154},
-    'turtle': {'idle_retreat': 252, 'idle_browse': 206},
-    'dino': {'idle_sniff': 138, 'idle_alert': 169},
-    'bird': {'idle_preens': 173, 'idle_wings': 122, 'idle_scan': 127},
-    'mouse': {'idle_scout': 154, 'idle_groom': 174},
+    'hero': {'idle_watch': 84, 'idle_check_wand': 98},
+    'dog': {'idle_wag': 70, 'idle_sit': 146, 'idle_listen': 80},
+    'cat': {'idle_groom': 121, 'idle_crouch': 120, 'idle_tail': 93},
+    'turtle': {'idle_retreat': 157, 'idle_browse': 139},
+    'dino': {'idle_sniff': 88, 'idle_alert': 100},
+    'bird': {'idle_preens': 109, 'idle_wings': 71, 'idle_scan': 66},
+    'mouse': {'idle_scout': 79, 'idle_groom': 98},
 }
+
+TURN_FRAMES = {'dog': 23, 'cat': 24, 'turtle': 40, 'dino': 31, 'bird': 22, 'mouse': 19, 'hero': 26}
+TURN_ANGLE = math.tau/6
+UP = Vector((0,0,1))
 
 
 def smooth(lo, hi, t):
@@ -31,7 +35,7 @@ def translate(bone, x=0, y=0, z=0):
     bone.location = bone.bone.matrix_local.to_quaternion().inverted() @ Vector((x,y,z))
 
 
-def planted_leg(bones, key, body_rotation, shift, foot_shift):
+def planted_leg(bones, key, body_rotation, shift, foot_shift, foot_yaw=0):
     upper, lower, foot = (bones[key], bones['Shin'+key], bones['Paw'+key])
     hips = bones['Body'].bone.head_local
     root = hips + body_rotation @ (upper.bone.head_local-hips) + shift
@@ -55,7 +59,7 @@ def planted_leg(bones, key, body_rotation, shift, foot_shift):
         bone.rotation_euler = bend_local.to_euler('XYZ')
         parent_deform = goal_rotation @ rest.inverted()
     foot_rest = foot.bone.matrix_local.to_quaternion()
-    foot.rotation_euler = ((parent_deform @ foot_rest).inverted() @ foot_rest).to_euler('XYZ')
+    foot.rotation_euler = ((parent_deform @ foot_rest).inverted() @ Quaternion(UP,foot_yaw) @ foot_rest).to_euler('XYZ')
 
 
 def grounding(bones, posture, tilt, drop, shift=0, rear_step=0, front_step=0, paw_lift=0):
@@ -74,6 +78,49 @@ def grounding(bones, posture, tilt, drop, shift=0, rear_step=0, front_step=0, pa
         planted_leg(bones,name,rotation,displacement,Vector((0,step*posture,lift)))
 
 
+def turn_pose(bones, species, sign, t):
+    """Counter-rotate planted feet while the game turns the root by 60 degrees."""
+    nominal = TURN_ANGLE*sign
+    yaw = nominal*(.48*smooth(.17,.48,t)+.52*smooth(.54,.93,t))
+    untwist = Quaternion(UP,-yaw)
+    head = bones['Head']
+    body = bones['Body']
+    anticipation = window(0,.15,.27,.55,t)
+    head.rotation_euler = (0,.32*sign*anticipation,0)
+    settle = window(.19,.29,.44,.52,t)+window(.61,.70,.83,.94,t)
+    body_shift = Vector((0,0,-.028*settle))
+    translate(body,*body_shift)
+    if species in ('bird','dino','hero'):
+        steps = ('BackL','BackR')
+    else:
+        steps = ('FrontL','FrontR','BackL','BackR')
+    for name in steps:
+        first = (name in ('FrontL','BackR')) == (sign>0)
+        start,end = (.09,.51) if first else (.48,.94)
+        p = smooth(start,end,t)
+        toe_lift = (.15 if species in ('bird','mouse','cat') else .106)*math.sin(math.pi*p)
+        foot_angle = nominal*p-yaw
+        if species in ('dog','cat'):
+            anchor = bones['Paw'+name].bone.head_local
+            foot_target = untwist @ (Quaternion(UP,nominal*p) @ anchor)
+            foot_target.z += toe_lift
+            planted_leg(bones,name,Quaternion(),body_shift,foot_target-anchor,foot_angle)
+        else:
+            limb = bones[name]
+            anchor = limb.bone.tail_local
+            rest = limb.bone.matrix_local.to_quaternion()
+            foot_target = untwist @ (Quaternion(UP,nominal*p) @ anchor)
+            foot_target.z += toe_lift
+            direction = (foot_target-limb.bone.head_local-body_shift).normalized()
+            aim = (rest @ Vector((0,1,0))).rotation_difference(direction)
+            limb.rotation_euler = (rest.inverted() @ aim @ rest).to_euler('XYZ')
+    if species in ('dog','cat','mouse','dino'):
+        bend(bones['Tail'],z=-.23*sign*window(.22,.43,.79,1,t))
+    if species=='bird':
+        bend(bones['FrontL'],.12*settle,z=-.16*settle)
+        bend(bones['FrontR'],.12*settle,z=.16*settle)
+
+
 def pose(rig, species, clip, t):
     bones = rig.pose.bones
     for bone in bones:
@@ -83,6 +130,9 @@ def pose(rig, species, clip, t):
         bone.scale = (1,1,1)
 
     body, head, tail = (bones[key] for key in ('Body','Head','Tail'))
+    if clip.startswith('turn_'):
+        turn_pose(bones,species,1 if clip=='turn_right' else -1,t)
+        return
     if clip == 'idle':
         # A chest expansion, with feet and head position held at rest.
         breath = (1-math.cos(t*math.tau))*.5

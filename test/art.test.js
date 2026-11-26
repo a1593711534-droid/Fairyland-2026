@@ -40,6 +40,8 @@ test('the hero and all creature forms have rigged, vertex-painted inset eyes', a
     for (const { attributes } of eyes) {
       assert.ok(attributes.COLOR_0 !== undefined && attributes.JOINTS_0 !== undefined, name)
     }
+    assert.ok(model.meshes.some(mesh => mesh.extras?.targetNames?.includes('Blink') &&
+      mesh.primitives.some(primitive => primitive.targets?.length)), name + ' has no blink morph')
   }
 })
 

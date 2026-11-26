@@ -2,9 +2,10 @@ import * as T from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
-import { distance } from '../game/geometry.js'
+import { distance, lineOfSight } from '../game/geometry.js'
 import { elementalEffect } from './elemental-effects.js'
 import { idleSequence } from './idle-sequence.js'
+import { advanceBearing, angularDifference, bearing, observedPoint, TURN_ANGLE, turnProgress } from './attention.js'
 import { applySurfaces, fireflies, surfaceTime } from './surfaces.js'
 import { artURL } from './art-url.js'
 import { fireSummon, warmFire } from './fire-summon.js'
@@ -31,6 +32,9 @@ const presets = {
 const cloneUnit = data => ({
   ...data, scene: clone(data.scene),
 })
+
+const turnAxis = new T.Vector3(0, 1, 0)
+const headRotation = new T.Quaternion()
 
 function portraitFloor() {
   const floor = new T.Mesh(new T.PlaneGeometry(9.2, 9.2), new T.ShaderMaterial({
@@ -99,6 +103,8 @@ export class Stage {
     this.scene.add(...this.magicLights)
     this.units = new Map()
     this.reduced = false
+    this.visualSeed = Math.floor(Math.random() * 2 ** 32)
+    this.clock = 0
     this.actors = new T.Group()
     this.scene.add(this.actors)
     this.cursor = new T.Group()
@@ -115,6 +121,7 @@ export class Stage {
     this.floor = new T.Plane(new T.Vector3(0, 1, 0), 0)
     this.v = new T.Vector3()
     this.last = performance.now()
+    document.addEventListener('visibilitychange', () => { this.last = performance.now() })
     this.resize = new ResizeObserver(() => this.layout())
     this.resize.observe(host)
     this.mapLoaded = asset('world').then(data => {
@@ -203,16 +210,22 @@ export class Stage {
 
   bind(id, name, pos, options = {}) {
     const existing = this.units.get(id)
-    if (existing) return existing.loading
+    if (existing) {
+      if (options.team !== undefined) existing.team = options.team
+      if (options.dead !== undefined) existing.dead = options.dead
+      return existing.loading
+    }
     const pivot = new T.Group()
     pivot.position.set(pos.x, 0, pos.z)
     pivot.rotation.y = options.angle ?? .35
     pivot.scale.setScalar(options.scale ?? 1)
     pivot.visible = !options.hidden
     const portrait = this.mode === 'choose' || this.mode === 'inspect'
-    const idle = !options.ghost && idleSequence(name, id, portrait)
-    const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead), idle,
-      idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost) }
+    const idle = !options.ghost && idleSequence(name, id, portrait, this.visualSeed + Math.floor(this.clock * 1000))
+    const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead), idle, portrait, team: options.team,
+      idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost), gaze: 0,
+      nextLook: this.clock + (idle?.firstDelay ?? 2) * .64, headBase: new T.Quaternion(), lids: [],
+      blinkAt: this.clock + (idle?.firstDelay ?? 2) * .92 }
     if (!options.ghost) {
       unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
       unit.shadow.visible = !options.hidden
@@ -227,6 +240,8 @@ export class Stage {
       const model = cloneUnit(data)
       model.scene.traverse(obj => {
         if (!obj.isMesh) return
+        const blink = obj.morphTargetDictionary?.Blink
+        if (blink !== undefined && !unit.ghost) unit.lids.push([obj, blink])
         obj.castShadow = !options.ghost
         obj.receiveShadow = false
         obj.frustumCulled = false
@@ -243,6 +258,7 @@ export class Stage {
         }
       })
       pivot.add(model.scene)
+      unit.head = model.scene.getObjectByName('Head')
       unit.mixer = new T.AnimationMixer(model.scene)
       for (const clip of model.animations) unit.actions.set(clip.name, unit.mixer.clipAction(clip))
       if (!unit.ghost) this.play(id, unit.dead ? 'death' : 'idle', unit.dead, unit.dead)
@@ -272,7 +288,7 @@ export class Stage {
     this.units.delete(id)
   }
 
-  play(id, clip, once = true, finish = false) {
+  play(id, clip, once = true, finish = false, speed = 1) {
     const unit = this.units.get(id)
     const next = unit?.actions.get(clip)
     if (!next || unit.current === next && !once) return
@@ -280,6 +296,7 @@ export class Stage {
     next.reset()
     next.enabled = true
     next.setEffectiveWeight(1)
+    next.setEffectiveTimeScale(speed)
     next.setLoop(once ? T.LoopOnce : T.LoopRepeat, once ? 1 : Infinity)
     next.clampWhenFinished = once
     next.play()
@@ -287,14 +304,126 @@ export class Stage {
       if (this.reduced && clip === 'idle') {
         previous.stop()
         unit.mixer.update(0)
-      } else previous.crossFadeTo(next, clip.startsWith('idle') && unit.currentName.startsWith('idle') ? .30 : .15, false)
+      } else previous.crossFadeTo(next, clip.startsWith('idle') && unit.currentName.startsWith('idle') ? .18 : .12, false)
     }
     if (finish) next.time = next.getClip().duration
     unit.current = next
     unit.currentName = clip
     unit.returnToRest = once && clip !== 'death' && clip !== 'caught'
+    if (!clip.startsWith('turn_')) unit.stepTurn = null
+    if (clip === 'death' || clip === 'caught') {
+      unit.notice = null
+      unit.headingGoal = null
+    }
+    if (clip === 'hit') unit.blinkAt = this.clock
     if (clip === 'idle') unit.idleIn = unit.idlePause
-    if (!clip.startsWith('idle')) unit.idlePause = unit.idle?.firstDelay
+    if (!clip.startsWith('idle') && !clip.startsWith('turn_')) {
+      unit.idlePause = unit.idle?.firstDelay
+      unit.notice = null
+    }
+  }
+
+  lookAround(unit) {
+    const { idle, pivot, portrait } = unit
+    const jitter = (idle.sample() - .5) * 2
+    let pos, mood = 'rest'
+    if (portrait) {
+      const camera = this.camera.position
+      const heading = bearing(pivot.position, camera) + jitter * 1.16
+      pos = { x: pivot.position.x + Math.sin(heading), z: pivot.position.z + Math.cos(heading) }
+    } else {
+      const candidates = Array.from(this.units.values())
+        .filter(other => other.id !== unit.id && !other.dead && !other.ghost && other.pivot.visible)
+        .map(other => ({ pos: other.pivot.position, team: other.team }))
+      const observed = observedPoint({ pos: pivot.position, team: unit.team }, candidates, idle.sample())
+      if (observed) ({ pos, mood } = observed)
+      else {
+        // Glance toward a nearby patch of ground independently of the last facing.
+        const direction = bearing(pivot.position, { x: .25, z: -.63 }) + jitter * 1.64
+        pos = { x: pivot.position.x + Math.sin(direction) * 3, z: pivot.position.z + Math.cos(direction) * 3 }
+      }
+    }
+    this.notice(unit, pos, mood, false)
+    unit.nextLook = this.clock + 3.1 + idle.sample() * 4.7
+  }
+
+  notice(unit, point, mood, urgent) {
+    const delay = unit.idle.glanceDelay()
+    const start = this.clock + delay
+    unit.notice = { point, mood, urgent, start, stepAt: start + .32 + unit.idle.sample() * .26,
+      end: start + 1.45 + unit.idle.sample() * 1.6, steps: urgent ? 3 : unit.idle.sample() < .61 ? 1 : 0 }
+    if (urgent && unit.currentName === 'idle') unit.idleIn = Math.min(unit.idleIn, delay + 1.24)
+  }
+
+  signal(point, source, mood = 'alert', radius = 6.2) {
+    if (this.mode !== 'battle' || this.reduced || !point) return
+    const instigator = this.units.get(source)
+    const where = { x: point.x, z: point.z }
+    for (const unit of this.units.values()) {
+      if (unit.id === source || !unit.idle || unit.dead || !unit.pivot.visible || !unit.currentName) continue
+      const away = distance(unit.pivot.position, where)
+      if (away > radius || away < .16 || !lineOfSight(unit.pivot.position, where)) continue
+      const ally = unit.team === instigator?.team && unit.team === 'ally'
+      const urgent = !ally && (away < 3.3 || mood === 'alert')
+      if (unit.notice?.urgent && !urgent && this.clock < unit.notice.end) continue
+      if (unit.notice?.urgent && urgent && this.clock < unit.notice.end &&
+          distance(unit.notice.point, unit.pivot.position) + .6 < away) continue
+      this.notice(unit, where, ally || mood === 'arrival' ? 'social' : urgent ? 'alert' : 'watch', urgent)
+      unit.nextLook = Math.max(unit.nextLook, this.clock + 3.4)
+    }
+  }
+
+  updateFacing(unit, dt) {
+    const current = unit.currentName
+    const turning = unit.stepTurn
+    if (turning && current.startsWith('turn_')) {
+      const progress = turnProgress(unit.current.time / unit.current.getClip().duration)
+      unit.pivot.rotation.y = turning.started + turning.direction * TURN_ANGLE * progress
+    } else if (unit.headingGoal !== null && unit.headingGoal !== undefined) {
+      unit.pivot.rotation.y = advanceBearing(unit.pivot.rotation.y, unit.headingGoal, dt * (unit.travel ? 14 : 20))
+      if (Math.abs(angularDifference(unit.pivot.rotation.y, unit.headingGoal)) < .005) unit.headingGoal = null
+    }
+
+    const notice = unit.notice
+    const looking = !this.reduced && unit.idle && !unit.travel && notice && this.clock >= notice.start &&
+      this.clock < notice.end && (current?.startsWith('idle') || turning)
+    let gaze = 0
+    if (looking) {
+      const angle = angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, notice.point))
+      const limit = unit.idle.neck
+      gaze = Math.max(-limit, Math.min(limit, angle)) * (turning ? .54 : 1)
+      if (!turning && notice.steps > 0 && current === 'idle' && this.clock >= notice.stepAt && Math.abs(angle) > .73) {
+        notice.steps--
+        notice.stepAt = this.clock + .68
+        notice.end = Math.max(notice.end, this.clock + 1.62)
+        const direction = Math.sign(angle)
+        const name = direction > 0 ? 'turn_right' : 'turn_left'
+        if (unit.actions.has(name)) {
+          unit.headingGoal = null
+          unit.stepTurn = { started: unit.pivot.rotation.y, direction }
+          this.play(unit.id, name)
+        }
+      }
+    } else if (notice && this.clock >= notice.end) {
+      unit.notice = null
+    }
+    unit.gaze += (gaze - unit.gaze) * (this.reduced ? 1 : 1 - Math.exp(-dt * (unit.idle?.quick < .18 ? 13 : 9)))
+    if (unit.head && Math.abs(unit.gaze) > .001) {
+      unit.headBase.copy(unit.head.quaternion)
+      headRotation.setFromAxisAngle(turnAxis, unit.gaze)
+      unit.head.quaternion.multiply(headRotation)
+      unit.hasGaze = true
+    }
+  }
+
+  updateBlink(unit) {
+    if (!unit.idle || !unit.lids.length) return
+    const period = unit.idle.quick < .18 ? .118 : .181
+    const since = this.clock - unit.blinkAt
+    if (since > period) unit.blinkAt = this.clock + 1.9 + unit.idle.sample() * 4.1
+    const phase = since >= 0 && since < period ? Math.sin(Math.PI * since / period) ** .82 : 0
+    const close = unit.dead ? 1 : this.reduced ? 0 : phase
+    for (const [mesh, target] of unit.lids) mesh.morphTargetInfluences[target] = close
   }
 
   updateIdle(unit, dt) {
@@ -304,23 +433,38 @@ export class Stage {
       this.play(unit.id, 'idle', false)
       return
     }
+    if (this.reduced && unit.currentName.startsWith('turn_')) {
+      this.play(unit.id, 'idle', false)
+      return
+    }
     if (this.reduced && unit.currentName.startsWith('idle')) {
       if (unit.currentName !== 'idle') this.play(unit.id, 'idle', false)
       return
     }
-    if (!unit.idle || unit.currentName !== 'idle' || unit.travel) return
+    if (this.reduced || !unit.idle || unit.travel) return
+    const urgent = unit.notice?.urgent && this.clock >= unit.notice.start
+    if (urgent && ['idle_sit','idle_groom','idle_browse','idle_preens','idle_check_wand'].includes(unit.currentName)) {
+      this.play(unit.id, 'idle', false)
+      return
+    }
+    if (unit.currentName !== 'idle') return
+    if (this.clock >= unit.nextLook && (!unit.notice || this.clock >= unit.notice.end)) this.lookAround(unit)
+    if (urgent && unit.notice.steps > 0 &&
+        Math.abs(angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, unit.notice.point))) > .73) return
     unit.idleIn -= dt
     if (unit.idleIn > 0) return
-    const { clip, pause } = unit.idle.next()
+    const { clip, pause, speed } = unit.idle.next(unit.notice?.mood)
     unit.idleIn = unit.idlePause = pause
-    this.play(unit.id, clip)
+    this.play(unit.id, clip, true, false, speed)
   }
 
   face(actor, target) {
     const unit = this.units.get(actor)
     if (!unit || !target) return
-    const a = unit.pivot.position
-    unit.pivot.rotation.y = Math.atan2(target.x - a.x, target.z - a.z)
+    if (distance(unit.pivot.position, target) < .01) return
+    const heading = bearing(unit.pivot.position, target)
+    if (this.reduced) unit.pivot.rotation.y = heading
+    else unit.headingGoal = heading
   }
 
   move(actor, points, reduced) {
@@ -329,9 +473,13 @@ export class Stage {
     unit.travel?.resolve()
     unit.travel = null
     const cost = points.slice(1).reduce((sum, point, i) => sum + distance(points[i], point), 0)
+    const finish = points.at(-1)
+    if (finish) this.signal(finish, actor, 'move', 5.0)
     if (cost < .001 || reduced) {
-      const finish = points.at(-1)
-      if (finish) unit.pivot.position.set(finish.x, 0, finish.z)
+      if (finish) {
+        this.face(actor, finish)
+        unit.pivot.position.set(finish.x, 0, finish.z)
+      }
       this.play(actor, 'idle', false)
       return Promise.resolve()
     }
@@ -554,23 +702,35 @@ export class Stage {
 
   frame(now) {
     requestAnimationFrame(next => this.frame(next))
-    if (now - this.last < (this.software ? 70 : 24)) return
-    const dt = Math.min(.12, (now - this.last) / 1000)
+    if (this.host.hidden || document.hidden) {
+      this.last = now
+      return
+    }
+    if (now - this.last < (this.software ? 48 : 14)) return
+    const dt = (now - this.last) / 1000
     this.last = now
-    if (this.host.hidden) return
+    this.clock += dt
     if (this.pendingPointer) {
       const pointer = this.pendingPointer
       this.pendingPointer = null
       this.callbacks.hover(this.worldPoint(pointer))
     }
     for (const unit of this.units.values()) {
+      if (unit.hasGaze) {
+        unit.head.quaternion.copy(unit.headBase)
+        unit.hasGaze = false
+      }
       if (unit.pivot.visible && !(this.reduced && unit.currentName === 'idle')) unit.mixer?.update(dt)
       this.tickTravel(unit, dt)
       if (unit.shadow) {
         unit.shadow.position.x = unit.pivot.position.x
         unit.shadow.position.z = unit.pivot.position.z
       }
-      this.updateIdle(unit, dt)
+      if (unit.current && unit.pivot.visible) {
+        this.updateFacing(unit, dt)
+        this.updateIdle(unit, dt)
+        this.updateBlink(unit)
+      }
     }
     this.effects = this.effects.filter(tick => tick(dt))
     this.callbacks.frame(this)

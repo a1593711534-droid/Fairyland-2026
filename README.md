@@ -27,4 +27,4 @@
 - 安裝 Python 的 NumPy 與 Pillow 後，執行 `python tools/create-surface-maps.py /path/to/Rock030` 重建材質。路徑需包含解壓後的 1K JPG 素材。石材採用 [ambientCG Rock030](https://ambientcg.com/view?id=Rock030)，授權為 CC0。
 - 執行 `python tools/foliage-atlas.py` 產生樹冠的透明葉簇貼圖。
 - 現行六屬演出由 `src/render/elemental-effects.js` 繪製，火屬召喚另外使用 `src/render/fire-summon.js`，兩者共用可重複取樣的流場紋理。較早的 Effekseer 檔案可用 `python tools/author-effects.py /path/to/Effekseer` 重建，授權見 [Effekseer 授權](public/art/fx/effekseer-LICENSE.txt)。
-- `tools/idle_behaviors.py` 製作各物種的待機姿態，`src/render/idle-sequence.js` 控制安靜站姿與獨立行為之間的間隔。
+- `tools/idle_behaviors.py` 製作各物種的待機姿態和踏步轉身，`src/render/attention.js` 依位置與視線選擇注視方向。夥伴、移動、施法和命中都能改變注意力，再由物種的反應速度與姿態決定什麼時候轉頭或踏步轉向。

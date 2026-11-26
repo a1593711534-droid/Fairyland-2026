@@ -11,7 +11,7 @@ const themes = {
   fire: { dark: '#a11e10', bright: '#ff6b25', core: '#fff2ae', mode: 5 },
 }
 const cues = {
-  cast:    { duration: .49, radius: .37, height: 1.0, reveal: 0 },
+  cast:    { duration: .34, radius: .37, height: 1.0, reveal: 0 },
   impact:  { duration: .82, radius: 1.18, height: 1.36, reveal: 0 },
   area:    { duration: 1.14, radius: 1.18, height: 1.4, reveal: 0 },
   summon:  { duration: 1.64, radius: 1.30, height: 2.56, reveal: .61 },
@@ -295,8 +295,9 @@ export function elementalEffect(scene, point, element, type, toward, scale, ligh
       spiral.rotation.y = (inward ? -1 : 1)*t*(element==='wind' ? 5.9 : 3.5)
       land?.scale.setScalar(cue.radius*scale*1.7)
       if (destination) {
-        current.lerpVectors(origin,destination,Math.min(1,t*1.33))
-        current.y += .65*Math.sin(Math.PI*t)
+        const journey = Math.min(1,t*1.5)
+        current.lerpVectors(origin,destination,journey)
+        current.y += .46*Math.sin(Math.PI*journey)
         group.position.copy(current)
       }
       if (chips) for (let i=0; i<chips.count; i++) {

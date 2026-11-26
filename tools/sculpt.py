@@ -13,7 +13,7 @@ from mathutils import Vector, noise
 from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from idle_behaviors import CLIPS, pose as idle_pose
+from idle_behaviors import CLIPS, TURN_FRAMES, pose as idle_pose
 
 OUT = Path(__file__).resolve().parents[1] / '.art-cache'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -300,6 +300,13 @@ def inset_eye(surface, frame, shell, skin_color, species):
             a, b = i*count+j, i*count+(j+1)%count
             faces.append((a,a+count,b+count,b))
     eye = mesh('Cornea seated in sculpted eyelid',verts,faces,[shell])
+    eye.shape_key_add(name='Basis')
+    closed = eye.shape_key_add(name='Blink')
+    for i, (x,y,z) in enumerate(verts):
+        lid = cz+slant*(x-cx)-height*.21
+        blink_z = lid+(z-lid)*.062
+        hit,_,_,_ = surface.ray_cast((x,-4,blink_z),(0,1,0))
+        closed.data[i].co = (x,hit.y-.001 if hit is not None else y,blink_z)
     layer = eye.data.color_attributes.new('Eye pigments','BYTE_COLOR','POINT')
     nodes = shell.node_tree.nodes
     if not any(n.type == 'VERTEX_COLOR' for n in nodes):
@@ -454,16 +461,17 @@ def skeleton(name, height, hind_y, front_y, span, bird=False, person=False):
 
 def animate(rig, style):
     gait, lift, strike_gain, walk_time = {
-        'hero': (.54,.072,1.0,27), 'turtle': (.32,.035,.76,39), 'dino': (.55,.080,1.27,31),
-        'cat': (.61,.087,1.12,23), 'bird': (.36,.163,.86,25), 'mouse': (.71,.142,.69,20),
-        'dog': (.58,.094,1.12,26),
+        'hero': (.54,.072,1.0,21), 'turtle': (.32,.035,.76,33), 'dino': (.55,.080,1.27,24),
+        'cat': (.61,.087,1.12,18), 'bird': (.36,.163,.86,19), 'mouse': (.71,.142,.69,15),
+        'dog': (.58,.094,1.12,20),
     }[style]
     specs = {
-        'idle': (147, True), 'walk': (walk_time, True), 'attack': (27, False), 'skill': (38, False),
-        'hit': (19, False), 'death': (36, False), 'summon': (42, False),
-        'capture': (43, False), 'appear': (32, False), 'caught': (34, False), 'evolve': (63, False),
+        'idle': (110, True), 'walk': (walk_time, True), 'attack': (19, False), 'skill': (26, False),
+        'hit': (13, False), 'death': (31, False), 'summon': (29, False),
+        'capture': (29, False), 'appear': (21, False), 'caught': (22, False), 'evolve': (52, False),
     }
     specs.update({name: (frames, False) for name, frames in CLIPS[style].items()})
+    specs.update({name: (TURN_FRAMES[style], False) for name in ('turn_left','turn_right')})
     scene = bpy.context.scene
     scene.render.fps = 30
     bird = style == 'bird'
@@ -472,12 +480,12 @@ def animate(rig, style):
     for clip, (duration, _) in specs.items():
         action = bpy.data.actions.new(clip)
         data.action = action
-        resting = clip.startswith('idle')
-        samples = 36 if resting and clip != 'idle' else 8
+        special = clip.startswith(('idle','turn_'))
+        samples = min(36,duration) if special and clip != 'idle' else 8
         for step in range(samples+1):
             t = step / samples
             frame = 1 + round(t * duration)
-            if resting:
+            if special:
                 idle_pose(rig,style,clip,t)
                 for bone in rig.pose.bones:
                     for prop in ('location', 'rotation_euler', 'scale'):

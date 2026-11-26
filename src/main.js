@@ -12,6 +12,7 @@ import { availableSummons, summonPlan } from './game/summoning.js'
 import { consume, itemProblem, purchase, purchaseProblem } from './game/inventory.js'
 import { button, goldLine, kitPanel, shopPanel, summonPanel } from './interface.js'
 import { FairylandAudio } from './render/audio.js'
+import { initialBearing } from './render/attention.js'
 
 const app = document.querySelector('#app')
 app.innerHTML = '<div id="stage" hidden></div><div id="ui"></div><div id="tags"></div><div id="dialog"></div><div id="toast" role="status" aria-live="polite"></div>'
@@ -411,10 +412,11 @@ function renderModal() {
 
 function syncModels() {
   if (!stage || !game?.battle) return
-  for (const u of game.battle.units) {
+  const units = game.battle.units
+  for (const u of units) {
     if (u.dismissed) { stage.remove(u.id); continue }
     stage.bind(u.id, assetKey(u), u.pos, {
-      scale: u.practice ? .86 : 1, angle: u.team === 'ally' ? 1.13 : -.65,
+      scale: u.practice ? .86 : 1, angle: initialBearing(u, units), team: u.team,
       tint: u.kind === 'rival' ? '#d7a8ef' : null, dead: !u.hp,
     })
   }
@@ -590,7 +592,9 @@ function floatText(id, text) {
 }
 
 async function animate(events) {
-  for (const e of events) {
+  const visual = events.filter(event => event.type !== 'text')
+  for (let index = 0; index < visual.length; index++) {
+    const e = visual[index]
     const actor = pointOf(e.actor)
     const target = e.center ?? pointOf(e.target)
     if (e.type === 'move') {
@@ -602,56 +606,71 @@ async function animate(events) {
       stage.play(e.actor, e.clip)
       sound('cast', e.element)
       if (!settings.reduced && actor && target) stage.effect(actor, e.element, 'cast', target)
-      await wait(350)
+      stage.signal(actor, e.actor, 'alert', 4.8)
+      await wait(e.clip === 'attack' ? 190 : 245)
       if (!settings.reduced && target && e.radius) stage.effect(target, e.element, 'area', null, e.radius * .68)
     }
-    if (e.type === 'impact') {
-      stage.play(e.target, e.dead ? 'death' : 'hit')
-      const spell = skills[e.skill]
-      const at = pointOf(e.target)
-      if (!settings.reduced && spell?.element && at && !spell.radius) stage.effect(at, spell.element, 'impact')
-      sound('impact')
-      floatText(e.target, '−' + e.amount)
-      await wait(e.dead ? 580 : 270)
-    }
-    if (e.type === 'miss') {
-      floatText(e.target, '未命中')
-      await wait(330)
+    if (e.type === 'impact' || e.type === 'miss') {
+      let pause = 180
+      let hit = false
+      for (; index < visual.length; index++) {
+        const outcome = visual[index]
+        if (outcome.type === 'miss') {
+          floatText(outcome.target, '未命中')
+          continue
+        }
+        if (outcome.type !== 'impact') break
+        hit = true
+        if (outcome.dead) pause = 450
+        stage.play(outcome.target, outcome.dead ? 'death' : 'hit')
+        const spell = skills[outcome.skill]
+        const at = pointOf(outcome.target)
+        if (!settings.reduced && spell?.element && at && !spell.radius) stage.effect(at, spell.element, 'impact')
+        stage.signal(at, outcome.actor, 'alert', 5.2)
+        floatText(outcome.target, '−' + outcome.amount)
+      }
+      if (hit) sound('impact')
+      await wait(pause)
+      index--
     }
     if (e.type === 'summon-batch') {
       stage.play(e.actor, 'summon')
       const arrivals = e.targets.map(id => unitById(game.battle, id))
       sound('cast', elementOf(arrivals[0]))
-      const ready = Promise.all(arrivals.map(unit =>
-        stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1, hidden: true })))
-      await Promise.all([ready, wait(250)])
+      const allies = game.battle.units
+      const ready = Promise.all(arrivals.map(unit => stage.bind(unit.id, assetKey(unit), unit.pos, {
+        scale: unit.practice ? .86 : 1, hidden: true, team: unit.team, angle: initialBearing(unit, allies),
+      })))
+      await Promise.all([ready, wait(165)])
       if (!settings.reduced) {
         const cues = arrivals.map(unit => stage.effect(unit.pos, elementOf(unit), 'summon'))
         if (arrivals.some(unit => elementOf(unit) === 'fire')) sound('fire-rise')
-        await Promise.all([wait(285), ...cues])
+        await Promise.all(cues)
       }
       for (const unit of arrivals) {
         stage.reveal(unit.id)
         stage.play(unit.id, 'appear')
+        stage.signal(unit.pos, unit.id, 'arrival', 4.6)
       }
       sound('reward')
-      await wait(820)
+      await wait(490)
     }
     if (e.type === 'capture') {
       stage.face(e.actor, target)
       stage.play(e.actor, 'capture')
       if (!settings.reduced && target) stage.effect(target, e.element, 'capture')
+      stage.signal(target, e.actor, 'alert', 4.6)
       if (e.won) {
         stage.play(e.target, 'caught')
         sound('reward')
-        await wait(850)
+        await wait(555)
         stage.remove(e.target)
-      } else { floatText(e.target, '收服失敗'); await wait(620) }
+      } else { floatText(e.target, '收服失敗'); await wait(355) }
     }
     if (e.type === 'recall') {
       stage.play(e.actor, 'caught')
       if (!settings.reduced && actor) stage.effect(actor, e.element, 'recall')
-      await wait(720)
+      await wait(500)
       stage.remove(e.actor)
     }
   }
@@ -662,7 +681,7 @@ async function advanceEnemies() {
   if (enemyCanPlay(game.battle)) {
     busy = true
     render()
-    await wait(250)
+    await wait(100)
   }
   while (enemyCanPlay(game.battle)) {
     const previous = new Set(game.battle.events)
@@ -670,7 +689,7 @@ async function advanceEnemies() {
     save()
     await animate(game.battle.events.filter(event => !previous.has(event)))
     syncModels()
-    await wait(210)
+    await wait(90)
   }
   busy = false
   if (game.battle.result) {

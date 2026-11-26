@@ -351,20 +351,23 @@ test('all twelve Blender forms and the hero provide exported action clips', asyn
     assert.ok(root.meshes.length && root.skins.length)
     const all = root.animations.map(a => a.name)
     assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(),
-      ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','walk'])
+      ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','turn_left','turn_right','walk'])
     const sequence = idleSequence(file, 'inspection', true)
-    const behaviors = new Set()
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 14; i++) {
       const { clip, pause } = sequence.next()
-      assert.ok(all.includes(clip) && pause >= 4, file + ':' + clip)
+      assert.ok(all.includes(clip) && pause >= 2.4, file + ':' + clip)
+    }
+    const behaviors = new Set([...sequence.rest, ...sequence.alert, ...(sequence.social ?? [])])
+    for (const clip of behaviors) {
       const animation = root.animations.find(action => action.name === clip)
-      assert.ok(animation.channels.some(channel => channel.target.path === 'rotation'), file + ':' + clip)
-      behaviors.add(clip)
+      assert.ok(animation?.channels.some(channel => channel.target.path === 'rotation'), file + ':' + clip)
     }
     assert.deepEqual(all.filter(name => name.startsWith('idle_')).sort(), [...behaviors].sort())
     if (file.startsWith('dog')) {
       assert.ok(['idle_sit','idle_wag','idle_listen'].every(name => behaviors.has(name)))
       assert.equal(root.nodes.filter(node => /^(Shin|Paw)/.test(node.name)).length,8)
+      const sit = root.animations.find(action => action.name === 'idle_sit')
+      assert.ok(Math.max(...sit.samplers.map(({ input }) => root.accessors[input].max[0])) < 5.1)
     }
   }
 })
