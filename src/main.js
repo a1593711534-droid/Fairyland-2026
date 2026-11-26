@@ -7,6 +7,7 @@ import { enemyCanPlay, enemyTurn } from './game/ai.js'
 import { distance, movementBlocks, movementMask, router, travel } from './game/geometry.js'
 import { latest, newGame, readSettings, readSlot, slots, writeSettings, writeSlot } from './game/save.js'
 import { chooseEvent, requiresBattle } from './game/world.js'
+import { movementCheckpoint, reversibleMove, restoreMovement } from './game/undo-move.js'
 import { availableSummons, summonPlan } from './game/summoning.js'
 import { consume, itemProblem, purchase, purchaseProblem } from './game/inventory.js'
 import { button, goldLine, kitPanel, shopPanel, summonPanel } from './interface.js'
@@ -28,6 +29,9 @@ let placementPlan = []
 let shopTarget = 'hero'
 let worldPoint = null
 let busy = false
+let moveHistory = []
+let undoAfterWalk = false
+let walkingReversible = false
 let hoverRouter = null
 let toastTimer
 const audio = new FairylandAudio()
@@ -81,6 +85,8 @@ async function openGame(enter) {
 
 function setScene(next) {
   scene = next
+  moveHistory = []
+  undoAfterWalk = walkingReversible = false
   toast.classList.remove('show')
   audio.choose(next)
   modal = ''
@@ -102,7 +108,10 @@ function setScene(next) {
       return
     }
   }
-  stage?.setMode(next)
+  if (stage) {
+    stage.reduced = settings.reduced
+    stage.setMode(next)
+  }
   if (next === 'choose') stage.bind('preview', 'hero', { x: .78, z: 0 }, { angle: -.14 })
   if (next === 'world') {
     worldPoint = game.world
@@ -130,7 +139,6 @@ function renderMenu() {
     '<h1>精靈幻境<span>2026</span></h1><p class="title-sub">在精靈仍低聲說話的年代。</p><nav aria-label="主選單" class="title-nav">' +
     button('繼續遊戲 <b>↗</b>', 'continue', { css: 'menu-entry' + (saved ? ' primary' : ''), disabled: !saved }) +
     button('新遊戲 <b>↗</b>', 'new', { css: 'menu-entry' + (saved ? '' : ' primary') }) +
-    button('查看莉歐 <b>↗</b>', 'hero-preview', { css: 'menu-entry' }) +
     button('讀取存檔 <b>↗</b>', 'load', { css: 'menu-entry' }) +
     button('設定 <b>↗</b>', 'settings', { css: 'menu-entry' }) +
     button('說明 <b>↗</b>', 'help', { css: 'menu-entry' }) +
@@ -225,7 +233,9 @@ function renderBattle() {
       action('撤回', 'recall')) +
     action('物品', 'battle-kit') + action('狀態', 'status') + action('脫離', 'disengage', !actor.action) +
     action('衝刺', 'rush', !actor.action) + action('待機', 'end') +
-    (targetMode !== 'move' ? action('取消', 'cancel-target') : '') + '</div>'
+    (targetMode !== 'move' ? action('取消', 'cancel-target') :
+      moveHistory.length ? button('撤回移動', 'undo-move', { css: 'action move-back', disabled: busy && !walkingReversible,
+        title: '撤回上一步移動（右鍵）' }) : '') + '</div>'
   ui.innerHTML = '<section class="overlay battle-screen"><header class="topbar"><div><div class="eyebrow">' + nodeName(b.map) +
     '</div><h2 class="round">第 ' + b.round + ' 回合</h2></div><div class="initiative" aria-label="先攻順序">' +
     b.order.map(id => unitById(b, id)).filter(unit => unit.hp && !unit.dismissed)
@@ -256,7 +266,8 @@ function renderBattle() {
 
 function hint() {
   if (busy) return '行動結算中'
-  if (targetMode === 'move') return '點青色地面移動，點可命中的敵人普攻。金色路線會引發借機攻擊。'
+  if (targetMode === 'move') return moveHistory.length ? '短按右鍵可走回上一步，並退回那一步的移動距離。' :
+    '點青色地面移動，點可命中的敵人普攻。金色路線會引發借機攻擊。'
   if (targetMode === 'summon') return pendingSummon ? '點藍紫色範圍內的空地。短按右鍵取消這次選擇。' : '選精靈、點落點。可一次配置多隻。'
   if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) return '選擇法術中心。範圍內的我方也可能受到傷害。'
   if (targetMode === 'capture') return '選擇野生精靈。降低血量或施加異常可提高成功率。'
@@ -322,7 +333,7 @@ function renderModal() {
   }
   if (modal === 'help') {
     title = '玩法說明'
-    body = '<div class="guide"><h3>移動與行動</h3><p>選擇角色後，點青色區域即可移動。滑鼠移到地面可預覽繞路，紅線表示超出剩餘距離。點選攻擊或法術後，再點目標。行動與移動距離分開計算，待機才交給下一位。離開敵人的近戰範圍會引來借機攻擊，可先用主要行動脫離。</p>' +
+    body = '<div class="guide"><h3>移動與行動</h3><p>點青色區域即可移動。紅線表示超出距離，金色路線會引發借機攻擊。安全移動後短按右鍵可沿原路返回，直到提交其他行動或換角。已結算的借機攻擊會鎖定該步，可先用主要行動脫離。</p>' +
       '<h3>召喚與收服</h3><p>莉歐開局就有六種屬性的夥伴，進場時會獨自站在戰場上。她可在同一回合耗魔召喚多隻夥伴。魔力低於 ' + rules.tetherMana +
       ' 時，場上夥伴會變回野生。野生精靈生命愈低、異常愈多，收服機率愈高。回到月泉可回復生命與魔力。</p>' +
       '<h3>屬性與進化</h3><p>水克火、火克冰、冰克風、風克地、地克雷、雷克水。同屬性施法有加成，莉歐召喚火屬性精靈也有加成。召喚上場的夥伴可獲經驗，Lv. ' +
@@ -549,7 +560,7 @@ function clickUnit(id) {
     type: 'strike', target: id, at: u.pos,
     skill: targetMode === 'attack' ? 'attack' : skillFor(active(game.battle)),
   })
-  else if (targetMode === 'move' && selectAlly(game.battle, id)) { hoverRouter = null; save(); render() }
+  else if (targetMode === 'move' && chooseAlly(id)) return
   else {
     const basic = { type: 'strike', target: id, skill: 'attack' }
     if (targetMode === 'move' && validate(game, basic).ok) {
@@ -670,10 +681,15 @@ async function advanceEnemies() {
 }
 
 async function playerAct(command) {
-  if (busy || scene !== 'battle' || enemyCanPlay(game.battle)) return
+  if (busy || scene !== 'battle' || game.battle.result || enemyCanPlay(game.battle)) return
+  const checkpoint = command.type === 'move' ? movementCheckpoint(game.battle) : null
   const previous = new Set(game.battle.events)
   const result = act(game, command)
   if (!result.ok) { notify(result.problem); return }
+  const undoable = checkpoint && reversibleMove(game.battle, checkpoint, result)
+  if (undoable) moveHistory.push(undoable)
+  else moveHistory = []
+  walkingReversible = Boolean(undoable)
   busy = true
   targetMode = 'move'
   pendingSummon = null
@@ -683,8 +699,49 @@ async function playerAct(command) {
   save()
   render()
   await animate(game.battle.events.filter(event => !previous.has(event)))
+  walkingReversible = false
+  if (undoAfterWalk) {
+    undoAfterWalk = false
+    busy = false
+    await undoMovement()
+    return
+  }
   syncModels()
   await advanceEnemies()
+}
+
+async function undoMovement() {
+  if (walkingReversible) {
+    undoAfterWalk = true
+    return
+  }
+  if (busy || scene !== 'battle' || !moveHistory.length) return
+  const move = moveHistory.pop()
+  if (!restoreMovement(game.battle, move)) {
+    moveHistory = []
+    render()
+    return
+  }
+  hoverRouter = null
+  busy = true
+  save()
+  render()
+  await stage.move(move.id, move.route, settings.reduced)
+  busy = false
+  render()
+}
+
+function chooseAlly(id) {
+  const before = game.battle.active
+  if (!selectAlly(game.battle, id)) return false
+  if (game.battle.active !== before) moveHistory = []
+  hoverRouter = null
+  targetMode = 'move'
+  pendingSummon = null
+  placementPlan = []
+  save()
+  render()
+  return true
 }
 
 async function walkTo(key) {
@@ -744,6 +801,10 @@ function cancelTarget() {
 }
 
 function cancelInteraction() {
+  if (scene === 'battle' && walkingReversible) {
+    void undoMovement()
+    return true
+  }
   if (busy || modal === 'result') return false
   if (modal) {
     modal = ''
@@ -752,6 +813,10 @@ function cancelInteraction() {
   }
   if (scene === 'battle' && targetMode !== 'move') {
     cancelTarget()
+    return true
+  }
+  if (scene === 'battle' && moveHistory.length) {
+    void undoMovement()
     return true
   }
   if (scene === 'inspect') {
@@ -784,8 +849,8 @@ app.addEventListener('click', event => {
   audio.enable()
   sound()
   if (code === 'continue') void openGame(() => resume(latest()))
-  if (code === 'hero-preview') void openGame(() => setScene('choose'))
-  if (code === 'new' || code === 'start') void openGame(startGame)
+  if (code === 'new') void openGame(() => setScene('choose'))
+  if (code === 'start') startGame()
   if (code === 'menu') { save(); busy = false; setScene('menu') }
   if (['settings', 'load', 'help', 'pause', 'save', 'collection', 'status', 'world-kit', 'battle-kit', 'inspect-kit', 'shop', 'world-event'].includes(code)) {
     modal = code
@@ -821,12 +886,11 @@ app.addEventListener('click', event => {
     render()
   }
   if (code === 'cancel-target') cancelTarget()
+  if (code === 'undo-move') void undoMovement()
   if (code === 'pick-summon') { pendingSummon = value; render() }
   if (code === 'drop-summon') { placementPlan = placementPlan.filter(row => row.id !== value); render() }
   if (code === 'confirm-summons') void playerAct({ type: 'summon-batch', placements: placementPlan })
-  if (code === 'select' && selectAlly(game.battle, value)) {
-    hoverRouter = null; targetMode = 'move'; pendingSummon = null; placementPlan = []; save(); render()
-  }
+  if (code === 'select') chooseAlly(value)
   if (code === 'unit') clickUnit(value)
   if (['recall', 'end', 'disengage', 'rush'].includes(code)) void playerAct({ type: code })
   if (code === 'use-item') {
@@ -883,6 +947,7 @@ dialog.addEventListener('input', event => {
   const input = event.target
   if (!(input instanceof HTMLInputElement)) return
   settings[input.id] = input.type === 'checkbox' ? input.checked : Number(input.value)
+  if (stage) stage.reduced = settings.reduced
   writeSettings(settings)
   audio.configure(settings.volume, settings.music)
   if (!['volume', 'music'].includes(input.id)) {
@@ -892,7 +957,7 @@ dialog.addEventListener('input', event => {
 })
 
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !busy) {
+  if (event.key === 'Escape' && (!busy || walkingReversible)) {
     if (modal === 'result') return
     if (!cancelInteraction() && scene !== 'menu') { modal = 'pause'; renderModal() }
   }

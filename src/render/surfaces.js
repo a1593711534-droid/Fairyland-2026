@@ -10,6 +10,8 @@ const surface = [
   [/(bark|Oil-rubbed rowan)$/, 'bark', .53],
   [/^(Midnight wool|Russet velvet|Faded ochre linen)/, 'cloth', .52],
   [/^Oiled leather/, 'hide', .54],
+  [/^Carapace/, 'scales', .31, true, true],
+  [/^Feather/, 'plume', .27, true, true],
   [/^Coat scales/, 'scales', .36, true, true],
   [/^Coat fur/, 'fur', .22, true, true],
   [/^Coat plume/, 'plume', .24, true, true],
@@ -93,7 +95,7 @@ export async function applySurfaces(scene) {
           material.normalScale.setScalar(bump)
           if (roughness) {
             material.roughnessMap = roughness
-            if (normalOnly) material.roughness = name === 'scales' ? .88 : .98
+            if (normalOnly) material.roughness = material.name.startsWith('Carapace') ? .79 : name === 'scales' ? .88 : .98
           }
           material.needsUpdate = true
         }).catch(() => {}))

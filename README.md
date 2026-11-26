@@ -7,8 +7,8 @@
 
 ## 遊玩
 
-1. 新遊戲會從月泉營地出發。點微光林地可直接進場測試戰鬥、收服及練等。主選單可另外查看莉歐。
-2. 戰鬥指令固定顯示在下方。點可達地面移動，點射程內的敵人普攻。短按右鍵撤銷目前的瞄準或關閉面板，拖曳右鍵旋轉鏡頭。觸控可用畫面上的取消按鈕。
+1. 點「新遊戲」會先進角色選擇。確認莉歐後從月泉營地出發。點微光林地可直接進場測試戰鬥、收服及練等。
+2. 戰鬥指令固定顯示在下方。點可達地面移動，點射程內的敵人普攻。短按右鍵可取消目前的瞄準、關閉面板，或逐步撤回本次行動階段的安全移動。借機攻擊結算後該步會鎖定。拖曳右鍵可旋轉鏡頭，觸控可用畫面上的「取消」與「撤回移動」。
 3. 莉歐開局已有六種精靈。召喚時在同一面板選精靈、點空地，可放置多隻後一次提交。低於 5 點魔力時，仍在場的夥伴會變回野生。
 4. 打倒練習精靈快速取得經驗。Lv. 3 後回大地圖，打開精靈手冊進化。
 5. 各角色有三格物品欄。可到蘑菇小攤購買消耗品、裝備和特殊道具。月泉可治療隊伍。
@@ -27,3 +27,4 @@
 - 安裝 Python 的 NumPy 與 Pillow 後，執行 `python tools/create-surface-maps.py /path/to/Rock030` 重建材質。路徑需包含解壓後的 1K JPG 素材。石材採用 [ambientCG Rock030](https://ambientcg.com/view?id=Rock030)，授權為 CC0。
 - 執行 `python tools/foliage-atlas.py` 產生樹冠的透明葉簇貼圖。
 - 現行六屬演出由 `src/render/elemental-effects.js` 繪製，火屬召喚另外使用 `src/render/fire-summon.js`，兩者共用可重複取樣的流場紋理。較早的 Effekseer 檔案可用 `python tools/author-effects.py /path/to/Effekseer` 重建，授權見 [Effekseer 授權](public/art/fx/effekseer-LICENSE.txt)。
+- `tools/idle_behaviors.py` 製作各物種的待機姿態，`src/render/idle-sequence.js` 控制安靜站姿與獨立行為之間的間隔。

@@ -43,6 +43,19 @@ test('the hero and all creature forms have rigged, vertex-painted inset eyes', a
   }
 })
 
+test('physical costume, shell and feather layers survive model export', async () => {
+  const distinct = {
+    hero: ['Russet velvet', 'Russet velvet lining', 'Midnight wool', 'Oiled leather', 'Struck brass detail'],
+    turtle: ['Carapace scutes', 'Carapace lip', 'Carapace plastron'],
+    bird: ['Feather coverts', 'Feather primaries', 'Horn beak upper', 'Horn beak lower'],
+  }
+  for (const [name, materials] of Object.entries(distinct)) {
+    const model = await modelJson(name)
+    const assigned = model.meshes.flatMap(mesh => mesh.primitives).map(primitive => model.materials[primitive.material].name)
+    for (const material of materials) assert.ok(assigned.some(entry => entry.startsWith(material)), name + ': ' + material)
+  }
+})
+
 test('forest crowns use a UV-mapped atlas with a bounded triangle count', async () => {
   const model = await modelJson('canopy')
   const material = model.materials.findIndex(entry => entry.name === 'Alder foliage atlas')

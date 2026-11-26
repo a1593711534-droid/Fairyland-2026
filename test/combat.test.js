@@ -8,6 +8,8 @@ import { distance, movementBlocks, movementMask, router } from '../src/game/geom
 import { newGame, readSlot, writeSlot } from '../src/game/save.js'
 import { inventory, placeItem, purchase } from '../src/game/inventory.js'
 import { chooseEvent, encounterAt, requiresBattle } from '../src/game/world.js'
+import { movementCheckpoint, reversibleMove, restoreMovement } from '../src/game/undo-move.js'
+import { idleSequence } from '../src/render/idle-sequence.js'
 
 function fixture(map = 'glade') {
   const game = newGame()
@@ -96,6 +98,35 @@ test('departing threatened space can trigger a reaction and disengage prevents i
   assert.equal(act(game, { type: 'disengage' }).ok, true)
   assert.equal(player.action, false)
   assert.equal(movementReactions(battle, player, path).length, 0)
+})
+
+test('successive free moves can be undone in reverse order with the exact movement budget', () => {
+  const { game, battle, player } = fixture()
+  const initial = movementCheckpoint(battle)
+  const first = reversibleMove(battle, initial, act(game, { type: 'move', at: { x: -9.8, z: 1.1 } }))
+  const intermediate = movementCheckpoint(battle)
+  const second = reversibleMove(battle, intermediate, act(game, { type: 'move', at: { x: -10.6, z: .3 } }))
+  assert.ok(first && second)
+  assert.equal(restoreMovement(battle, first), false)
+  assert.equal(restoreMovement(battle, second), true)
+  assert.deepEqual(player.pos, intermediate.start)
+  assert.equal(player.movement, intermediate.allowance)
+  assert.equal(restoreMovement(battle, first), true)
+  assert.deepEqual(player.pos, initial.start)
+  assert.equal(player.movement, initial.allowance)
+  assert.equal(player.action, true)
+})
+
+test('opportunity attacks commit movement even when the player survives', () => {
+  const { game, battle, player } = fixture()
+  const foe = unitById(battle, 'native-0')
+  foe.pos = { x: -7, z: -.1 }
+  const before = movementCheckpoint(battle)
+  const result = act(game, { type: 'move', at: { x: -10.7, z: 0 } })
+  assert.equal(result.ok, true)
+  assert.equal(player.hp > 0, true)
+  assert.equal(foe.reaction, false)
+  assert.equal(reversibleMove(battle, before, result), null)
 })
 
 test('capture uses health and status, preserves captured state and rejects enemy summons', () => {
@@ -318,7 +349,22 @@ test('all twelve Blender forms and the hero provide exported action clips', asyn
     const bytes = await readFile(new URL('../public/art/' + file + '.glb', import.meta.url))
     const root = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)))
     assert.ok(root.meshes.length && root.skins.length)
-    assert.deepEqual(root.animations.map(a => a.name).sort(),
+    const all = root.animations.map(a => a.name)
+    assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(),
       ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','walk'])
+    const sequence = idleSequence(file, 'inspection', true)
+    const behaviors = new Set()
+    for (let i = 0; i < 8; i++) {
+      const { clip, pause } = sequence.next()
+      assert.ok(all.includes(clip) && pause >= 4, file + ':' + clip)
+      const animation = root.animations.find(action => action.name === clip)
+      assert.ok(animation.channels.some(channel => channel.target.path === 'rotation'), file + ':' + clip)
+      behaviors.add(clip)
+    }
+    assert.deepEqual(all.filter(name => name.startsWith('idle_')).sort(), [...behaviors].sort())
+    if (file.startsWith('dog')) {
+      assert.ok(['idle_sit','idle_wag','idle_listen'].every(name => behaviors.has(name)))
+      assert.equal(root.nodes.filter(node => /^(Shin|Paw)/.test(node.name)).length,8)
+    }
   }
 })

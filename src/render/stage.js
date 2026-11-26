@@ -4,6 +4,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
 import { distance } from '../game/geometry.js'
 import { elementalEffect } from './elemental-effects.js'
+import { idleSequence } from './idle-sequence.js'
 import { applySurfaces, fireflies, surfaceTime } from './surfaces.js'
 import { artURL } from './art-url.js'
 import { fireSummon, warmFire } from './fire-summon.js'
@@ -97,6 +98,7 @@ export class Stage {
     this.magicLights = Array.from({ length: 2 }, () => new T.PointLight('#ff741d', 0, 6.3, 1.75))
     this.scene.add(...this.magicLights)
     this.units = new Map()
+    this.reduced = false
     this.actors = new T.Group()
     this.scene.add(this.actors)
     this.cursor = new T.Group()
@@ -207,7 +209,10 @@ export class Stage {
     pivot.rotation.y = options.angle ?? .35
     pivot.scale.setScalar(options.scale ?? 1)
     pivot.visible = !options.hidden
-    const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead) }
+    const portrait = this.mode === 'choose' || this.mode === 'inspect'
+    const idle = !options.ghost && idleSequence(name, id, portrait)
+    const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead), idle,
+      idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost) }
     if (!options.ghost) {
       unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
       unit.shadow.visible = !options.hidden
@@ -240,7 +245,7 @@ export class Stage {
       pivot.add(model.scene)
       unit.mixer = new T.AnimationMixer(model.scene)
       for (const clip of model.animations) unit.actions.set(clip.name, unit.mixer.clipAction(clip))
-      this.play(id, unit.dead ? 'death' : 'idle', unit.dead, unit.dead)
+      if (!unit.ghost) this.play(id, unit.dead ? 'death' : 'idle', unit.dead, unit.dead)
     }).catch(error => this.callbacks.error(error))
     return unit.loading
   }
@@ -278,10 +283,37 @@ export class Stage {
     next.setLoop(once ? T.LoopOnce : T.LoopRepeat, once ? 1 : Infinity)
     next.clampWhenFinished = once
     next.play()
-    if (previous && previous !== next) previous.crossFadeTo(next, .13, false)
+    if (previous && previous !== next) {
+      if (this.reduced && clip === 'idle') {
+        previous.stop()
+        unit.mixer.update(0)
+      } else previous.crossFadeTo(next, clip.startsWith('idle') && unit.currentName.startsWith('idle') ? .30 : .15, false)
+    }
     if (finish) next.time = next.getClip().duration
     unit.current = next
-    unit.returnAt = once && clip !== 'death' && clip !== 'caught' ? performance.now() + next.getClip().duration * 1000 : null
+    unit.currentName = clip
+    unit.returnToRest = once && clip !== 'death' && clip !== 'caught'
+    if (clip === 'idle') unit.idleIn = unit.idlePause
+    if (!clip.startsWith('idle')) unit.idlePause = unit.idle?.firstDelay
+  }
+
+  updateIdle(unit, dt) {
+    const action = unit.current
+    if (!action || !unit.pivot.visible) return
+    if (unit.returnToRest && action.time >= action.getClip().duration - .001) {
+      this.play(unit.id, 'idle', false)
+      return
+    }
+    if (this.reduced && unit.currentName.startsWith('idle')) {
+      if (unit.currentName !== 'idle') this.play(unit.id, 'idle', false)
+      return
+    }
+    if (!unit.idle || unit.currentName !== 'idle' || unit.travel) return
+    unit.idleIn -= dt
+    if (unit.idleIn > 0) return
+    const { clip, pause } = unit.idle.next()
+    unit.idleIn = unit.idlePause = pause
+    this.play(unit.id, clip)
   }
 
   face(actor, target) {
@@ -532,13 +564,13 @@ export class Stage {
       this.callbacks.hover(this.worldPoint(pointer))
     }
     for (const unit of this.units.values()) {
-      unit.mixer?.update(dt)
+      if (unit.pivot.visible && !(this.reduced && unit.currentName === 'idle')) unit.mixer?.update(dt)
       this.tickTravel(unit, dt)
       if (unit.shadow) {
         unit.shadow.position.x = unit.pivot.position.x
         unit.shadow.position.z = unit.pivot.position.z
       }
-      if (unit.returnAt && now > unit.returnAt) this.play(unit.id, 'idle', false)
+      this.updateIdle(unit, dt)
     }
     this.effects = this.effects.filter(tick => tick(dt))
     this.callbacks.frame(this)
