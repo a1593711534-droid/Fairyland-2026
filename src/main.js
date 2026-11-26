@@ -592,10 +592,13 @@ async function animate(events) {
       sound('cast', e.element)
       if (!settings.reduced && actor && target) stage.effect(actor, e.element, 'cast', target)
       await wait(350)
-      if (!settings.reduced && target && e.radius) stage.effect(target, e.element, 'area')
+      if (!settings.reduced && target && e.radius) stage.effect(target, e.element, 'area', null, e.radius * .68)
     }
     if (e.type === 'impact') {
       stage.play(e.target, e.dead ? 'death' : 'hit')
+      const spell = skills[e.skill]
+      const at = pointOf(e.target)
+      if (!settings.reduced && spell?.element && at && !spell.radius) stage.effect(at, spell.element, 'impact')
       sound('impact')
       floatText(e.target, '−' + e.amount)
       await wait(e.dead ? 580 : 270)
@@ -609,10 +612,14 @@ async function animate(events) {
       const arrivals = e.targets.map(id => unitById(game.battle, id))
       sound('cast', elementOf(arrivals[0]))
       await wait(300)
-      await Promise.all(arrivals.map(unit => stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1 })))
+      if (!settings.reduced) for (const unit of arrivals) stage.effect(unit.pos, elementOf(unit), 'summon')
+      const ready = Promise.all(arrivals.map(async unit => {
+        await stage.bind(unit.id, assetKey(unit), unit.pos, { scale: unit.practice ? .86 : 1, hidden: true })
+      }))
+      await Promise.all([ready, wait(300)])
       for (const unit of arrivals) {
+        stage.reveal(unit.id)
         stage.play(unit.id, 'appear')
-        if (!settings.reduced) stage.effect(unit.pos, elementOf(unit), 'summon')
       }
       sound('reward')
       await wait(820)

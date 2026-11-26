@@ -9,6 +9,7 @@ for (const file of readdirSync(input).filter(name => name.endsWith('.glb'))) {
   if (process.argv.length > 2 && !process.argv.slice(2).includes(file)) continue
   const ratio = file === 'world.glb' ? '0.36' : '0.72'
   const simplify = file === 'world.glb' ? ['-sa'] : []
+  // Three.js binds separate tileable textures by material name after loading these meshes.
   execFileSync(process.execPath, [gltfpack, '-i', input + file, '-o', output + file,
-    '-cc', '-si', ratio, '-se', '0.014', '-vp', '14', '-af', '15', ...simplify], { stdio: 'inherit' })
+    '-cc', '-km', '-kv', '-vtf', '-si', ratio, '-se', '0.014', '-vp', '14', '-af', '15', ...simplify], { stdio: 'inherit' })
 }

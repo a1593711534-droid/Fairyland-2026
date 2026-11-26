@@ -3,3 +3,4 @@ dist/
 *.blend1
 .DS_Store
 .art-cache/
+__pycache__/

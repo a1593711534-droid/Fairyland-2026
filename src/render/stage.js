@@ -4,13 +4,15 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
 import { distance } from '../game/geometry.js'
 import { trailFX } from './effects.js'
+import { EffekseerStage } from './effekseer.js'
+import { applySurfaces, fireflies } from './surfaces.js'
+import { artURL } from './art-url.js'
 
-const art = new URL('art/', new URL(import.meta.env.BASE_URL, document.baseURI))
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
 const library = new Map()
 const asset = name => {
   if (!library.has(name)) {
-    library.set(name, loader.loadAsync(new URL(name + '.glb', art).href).catch(error => {
+    library.set(name, loader.loadAsync(artURL(name + '.glb')).then(async data => { await applySurfaces(data.scene); return data }).catch(error => {
       library.delete(name)
       throw error
     }))
@@ -35,7 +37,7 @@ export class Stage {
     this.callbacks = callbacks
     this.scene = new T.Scene()
     this.scene.background = new T.Color('#193133')
-    this.scene.fog = new T.FogExp2('#294946', .015)
+    this.scene.fog = new T.FogExp2('#345755', .0165)
     this.camera = new T.OrthographicCamera(-1, 1, 1, -1, .1, 99)
     this.renderer = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     const gl = this.renderer.getContext()
@@ -45,20 +47,22 @@ export class Stage {
     this.renderer.shadowMap.enabled = !this.software
     this.renderer.shadowMap.type = T.PCFShadowMap
     this.renderer.toneMapping = T.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.27
+    this.renderer.toneMappingExposure = 1.18
+    this.effekseer = new EffekseerStage(this.renderer)
     this.canvas = this.renderer.domElement
     this.canvas.setAttribute('aria-label', '3D 場景')
     host.append(this.canvas)
 
-    this.scene.add(new T.HemisphereLight('#c3e5ee', '#405e46', 2.06))
-    const key = new T.DirectionalLight('#ffe1ae', 2.68)
-    key.position.set(-6, 14, 11)
+    this.ambient = new T.HemisphereLight('#c4e5f0', '#745e42', 2.18)
+    this.scene.add(this.ambient)
+    const key = this.key = new T.DirectionalLight('#ffe0ac', 2.64)
+    key.position.set(-11, 12, 8)
     key.castShadow = true
     key.shadow.mapSize.set(1024, 1024)
     Object.assign(key.shadow.camera, { left: -19, right: 19, top: 17, bottom: -17, near: .5, far: 52 })
     key.shadow.normalBias = .034
     this.scene.add(key)
-    const rim = new T.DirectionalLight('#81b4db', 1.75)
+    const rim = this.rim = new T.DirectionalLight('#9dd7ee', 2.45)
     rim.position.set(9, 8, -15)
     this.scene.add(rim)
     this.units = new Map()
@@ -66,7 +70,13 @@ export class Stage {
     this.scene.add(this.actors)
     this.cursor = new T.Group()
     this.scene.add(this.cursor)
-    this.sparks = []
+    this.motes = fireflies(this.scene)
+    this.groundShadows = new T.Group()
+    this.scene.add(this.groundShadows)
+    this.shadows = new T.MeshBasicMaterial({
+      map: new T.CanvasTexture(this.shadowTexture()), color: '#0f211b', transparent: true, opacity: .58,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+    })
     this.effects = []
     this.ray = new T.Raycaster()
     this.floor = new T.Plane(new T.Vector3(0, 1, 0), 0)
@@ -90,6 +100,14 @@ export class Stage {
   setMode(mode) {
     if (mode === this.mode) return
     this.mode = mode
+    this.effekseer.clear()
+    if (mode === 'battle' || mode === 'inspect') void this.effekseer.warm()
+    const landscape = mode === 'world' || mode === 'battle'
+    this.motes.visible = landscape
+    this.groundShadows.visible = landscape
+    this.ambient.intensity = landscape ? 2.18 : 2.55
+    this.key.intensity = landscape ? 2.64 : 3.1
+    this.rim.intensity = landscape ? 2.45 : 3.2
     for (const tick of this.effects) tick(Infinity)
     this.effects = []
     this.host.hidden = mode === 'menu'
@@ -125,6 +143,19 @@ export class Stage {
     this.camera.updateMatrixWorld()
   }
 
+  shadowTexture() {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 64
+    const ctx = canvas.getContext('2d')
+    const gradient = ctx.createRadialGradient(32, 32, 2, 32, 32, 31)
+    gradient.addColorStop(0, '#ffffff')
+    gradient.addColorStop(.36, '#ffffffab')
+    gradient.addColorStop(1, '#ffffff00')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 64, 64)
+    return canvas
+  }
+
   bind(id, name, pos, options = {}) {
     const existing = this.units.get(id)
     if (existing) return existing.loading
@@ -132,7 +163,15 @@ export class Stage {
     pivot.position.set(pos.x, 0, pos.z)
     pivot.rotation.y = options.angle ?? .35
     pivot.scale.setScalar(options.scale ?? 1)
+    pivot.visible = !options.hidden
     const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead) }
+    if (!options.ghost) {
+      unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
+      unit.shadow.visible = !options.hidden
+      unit.shadow.rotation.x = -Math.PI / 2
+      unit.shadow.position.set(pos.x, .014, pos.z)
+      this.groundShadows.add(unit.shadow)
+    }
     this.units.set(id, unit)
     this.actors.add(pivot)
     unit.loading = asset(name).then(data => {
@@ -163,6 +202,14 @@ export class Stage {
     return unit.loading
   }
 
+  reveal(id) {
+    const unit = this.units.get(id)
+    if (unit) {
+      unit.pivot.visible = true
+      if (unit.shadow) unit.shadow.visible = true
+    }
+  }
+
   remove(id) {
     const unit = this.units.get(id)
     if (!unit) return
@@ -170,6 +217,10 @@ export class Stage {
     unit.mixer?.stopAllAction()
     unit.pivot.traverse(obj => { if (obj.userData.ownedMaterial) obj.material.dispose() })
     this.actors.remove(unit.pivot)
+    if (unit.shadow) {
+      this.groundShadows.remove(unit.shadow)
+      unit.shadow.geometry.dispose()
+    }
     this.units.delete(id)
   }
 
@@ -399,7 +450,8 @@ export class Stage {
     }
   }
 
-  effect(point, element, type, towards) {
+  effect(point, element, type, towards, scale = 1) {
+    if (this.effekseer.play(type, element, point, towards, scale)) return
     this.effects.push(trailFX(this.scene, point, element, type, towards))
   }
 
@@ -417,10 +469,16 @@ export class Stage {
     for (const unit of this.units.values()) {
       unit.mixer?.update(dt)
       this.tickTravel(unit, dt)
+      if (unit.shadow) {
+        unit.shadow.position.x = unit.pivot.position.x
+        unit.shadow.position.z = unit.pivot.position.z
+      }
       if (unit.returnAt && now > unit.returnAt) this.play(unit.id, 'idle', false)
     }
     this.effects = this.effects.filter(tick => tick(dt))
     this.callbacks.frame(this)
+    this.motes.material.uniforms.time.value = now / 1000
     this.renderer.render(this.scene, this.camera)
+    this.effekseer.draw(this.camera, dt)
   }
 }
