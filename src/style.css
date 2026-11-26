@@ -309,3 +309,6 @@ kbd { color: var(--gold-light) }
   .battle-footer { bottom: 7px }
   .combat-log { display: none }
 }
+
+.character-copy .starter-elements { display: flex; gap: .72rem; flex-wrap: wrap; margin: 0 0 14px; }
+.starter-elements .element { min-width: 25px; }

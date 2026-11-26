@@ -307,6 +307,7 @@ export class Stage {
     for (const obj of [...group.children]) {
       group.remove(obj)
       obj.geometry?.dispose()
+      obj.userData.moveMask?.dispose()
       obj.material?.dispose()
     }
   }
@@ -323,22 +324,68 @@ export class Stage {
     this.marks.add(this.ring(pos, radius, color, area ? .31 : .84, area ? .985 : .85))
   }
 
+  movementArea({ bounds, columns, rows, mask }) {
+    const texture = new T.DataTexture(mask, columns, rows, T.RedFormat)
+    texture.minFilter = T.LinearFilter
+    texture.magFilter = T.LinearFilter
+    texture.unpackAlignment = 1
+    texture.needsUpdate = true
+    const geometry = new T.PlaneGeometry(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ)
+    const material = new T.ShaderMaterial({
+      transparent: true, depthWrite: false,
+      uniforms: {
+        field: { value: texture },
+        cell: { value: new T.Vector2(1 / columns, 1 / rows) },
+      },
+      vertexShader: `
+        varying vec2 texcoord;
+        void main() {
+          texcoord = vec2(uv.x, 1.0 - uv.y);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 texcoord;
+        uniform sampler2D field;
+        uniform vec2 cell;
+        float reach(vec2 point) {
+          if (min(point.x, point.y) < 0.0 || max(point.x, point.y) > 1.0) return 0.0;
+          return texture2D(field, point).r;
+        }
+        void main() {
+          float body = smoothstep(0.38, 0.65, reach(texcoord));
+          float inside = min(min(reach(texcoord + vec2(cell.x, 0.0)), reach(texcoord - vec2(cell.x, 0.0))),
+                            min(reach(texcoord + vec2(0.0, cell.y)), reach(texcoord - vec2(0.0, cell.y))));
+          float edge = body * (1.0 - smoothstep(0.18, 0.88, inside));
+          gl_FragColor = vec4(mix(vec3(.24, .66, .56), vec3(.62, .97, .85), edge), body * .19 + edge * .49);
+        }
+      `,
+    })
+    const zone = new T.Mesh(geometry, material)
+    zone.rotation.x = -Math.PI / 2
+    zone.position.set((bounds.minX + bounds.maxX) / 2, .042, (bounds.minZ + bounds.maxZ) / 2)
+    zone.renderOrder = 1
+    zone.userData.moveMask = texture
+    this.marks.add(zone)
+  }
+
   clearHover() {
     this.clear(this.cursor)
   }
 
-  path(points, destination, valid) {
+  path(destination, segments, marker) {
     this.clearHover()
-    const color = valid ? '#e7ca86' : '#eb826e'
-    this.cursor.add(this.ring(destination, .25, color))
-    if (!points?.length) return
-    const dots = points.map(p => new T.Vector3(p.x, .058, p.z))
-    const line = new T.Line(new T.BufferGeometry().setFromPoints(dots), new T.LineDashedMaterial({
-      color, dashSize: .22, gapSize: .09, transparent: true, opacity: .88, depthTest: false,
-    }))
-    line.computeLineDistances()
-    line.renderOrder = 3
-    this.cursor.add(line)
+    this.cursor.add(this.ring(destination, .25, marker))
+    for (const { points, color } of segments) {
+      if (points.length < 2) continue
+      const dots = points.map(p => new T.Vector3(p.x, .068, p.z))
+      const line = new T.Line(new T.BufferGeometry().setFromPoints(dots), new T.LineDashedMaterial({
+        color, dashSize: .24, gapSize: .065, transparent: true, opacity: .97, depthTest: true,
+      }))
+      line.computeLineDistances()
+      line.renderOrder = 3
+      this.cursor.add(line)
+    }
   }
 
   effect(point, element, type, towards) {

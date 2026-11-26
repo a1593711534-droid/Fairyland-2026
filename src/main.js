@@ -1,9 +1,10 @@
 import './style.css'
+import { version } from '../package.json'
 import { elements, hero, rules, skills, species, status, titleOf, waypoints, xpForLevel } from './game/content.js'
 import { act, active, alliesInTurn, areOpponents, elementOf, evolve, forecast, healParty, isWild, meters,
   percent, movementReactions, selectAlly, skillFor, startBattle, stat, unitById, validate, captureChance } from './game/combat.js'
 import { enemyCanPlay, enemyTurn } from './game/ai.js'
-import { distance, movementBlocks, router } from './game/geometry.js'
+import { distance, movementBlocks, movementMask, router, travel } from './game/geometry.js'
 import { latest, newGame, readSettings, readSlot, slots, writeSettings, writeSlot } from './game/save.js'
 import { Stage } from './render/stage.js'
 
@@ -128,7 +129,7 @@ function renderMenu() {
     button('讀取存檔 <b>↗</b>', 'load', { css: 'menu-entry' }) +
     button('設定 <b>↗</b>', 'settings', { css: 'menu-entry' }) +
     button('說明 <b>↗</b>', 'help', { css: 'menu-entry' }) +
-    '</nav></div><footer class="title-footer"><div><span class="live-dot"></span> 測試版 <span class="footer-divider"></span> v0.1.0</div>' +
+    '</nav></div><footer class="title-footer"><div><span class="live-dot"></span> 測試版 <span class="footer-divider"></span> v' + version + '</div>' +
     '<div class="scene-caption"><span>✦</span> 微光林地</div></footer></section>'
 }
 
@@ -138,6 +139,7 @@ function renderChoose() {
     '<h1>' + hero.name + '</h1><div class="character-class">' + sign(hero.element) + ' <span>' + hero.className + '</span></div>' +
     '<p>' + hero.byline + '</p><dl class="character-stats"><div><dt>生命</dt><dd>' + hero.hp + '</dd></div><div><dt>魔力</dt><dd>' + rules.playerMana +
     '</dd></div><div><dt>移動</dt><dd>' + hero.move + ' m</dd></div></dl>' +
+    '<p class="starter-elements" aria-label="起始夥伴含六種屬性">' + Object.keys(elements).map(key => sign(key)).join('') + '</p>' +
     button('踏上旅程 <b>↗</b>', 'start', { css: 'primary large' }) + '</div></section>'
 }
 
@@ -212,7 +214,7 @@ function renderBattle() {
 
 function hint() {
   if (busy) return '行動結算中'
-  if (targetMode === 'move') return '點擊地面移動。右鍵旋轉，滾輪縮放。'
+  if (targetMode === 'move') return '青色區域可抵達。移動滑鼠預覽路徑，紅線超出距離。'
   if (targetMode === 'summon') return '選擇法陣範圍內的空地。Esc 取消。'
   if (targetMode === 'capture') return '選擇野生精靈。降低血量或施加異常可提高成功率。'
   return '點選目標確認攻擊。名稱旁顯示命中率或不可攻擊的原因。'
@@ -270,8 +272,8 @@ function renderModal() {
   }
   if (modal === 'help') {
     title = '玩法說明'
-    body = '<div class="guide"><h3>移動與行動</h3><p>點地面移動。點選攻擊或法術後，再點目標。行動與移動距離分開計算，待機才交給下一位。離開敵人的近戰範圍會引來借機攻擊，可先用主要行動脫離。</p>' +
-      '<h3>召喚與收服</h3><p>莉歐可在同一回合耗魔召喚多隻夥伴。魔力低於 ' + rules.tetherMana +
+    body = '<div class="guide"><h3>移動與行動</h3><p>選擇角色後，青色區域會標出可走範圍。滑鼠移到地面可預覽繞路，紅線表示超出剩餘距離。點選攻擊或法術後，再點目標。行動與移動距離分開計算，待機才交給下一位。離開敵人的近戰範圍會引來借機攻擊，可先用主要行動脫離。</p>' +
+      '<h3>召喚與收服</h3><p>莉歐開局就有六種屬性的夥伴，進場時會獨自站在戰場上。她可在同一回合耗魔召喚多隻夥伴。魔力低於 ' + rules.tetherMana +
       ' 時，場上夥伴會變回野生。野生精靈生命愈低、異常愈多，收服機率愈高。回到月泉可回復生命與魔力。</p>' +
       '<h3>屬性與進化</h3><p>水克火、火克冰、冰克風、風克地、地克雷、雷克水。同屬性施法有加成，莉歐召喚火屬性精靈也有加成。召喚上場的夥伴可獲經驗，Lv. ' +
       rules.evolutionLevel + ' 可從手冊進化。</p><p><kbd>Esc</kbd> 取消或開啟選單　<kbd>Space</kbd> 待機</p></div>'
@@ -364,6 +366,10 @@ function refreshMarks() {
   }
   const actor = active(b)
   if (busy || actor.team !== 'ally') return
+  if (targetMode === 'move' && actor.movement >= .18) {
+    hoverRouter ??= router(actor.pos, movementBlocks(b.units.filter(u => !u.dismissed), actor))
+    stage.movementArea(movementMask(actor.pos, actor.movement, hoverRouter))
+  }
   const range = { capture: rules.captureRange, summon: rules.summonRange,
     attack: skills.attack.range, skill: skills[skillFor(actor)].range }[targetMode]
   if (range) stage.mark(actor.pos, range, '#ebce92', true)
@@ -381,21 +387,33 @@ function stageHover(pos) {
   if (actor.team !== 'ally') return
   if (targetMode === 'summon') {
     const check = validate(game, { type: 'summon', id: pendingSummon, at: pos })
-    stage.path(null, pos, check.ok)
+    stage.path(pos, [], check.ok ? '#f4dfaf' : '#f7827c')
     return
   }
   if (targetMode !== 'move') return
   hoverRouter ??= router(actor.pos, movementBlocks(b.units.filter(u => !u.dismissed), actor))
   const path = hoverRouter(pos)
-  const risk = path && movementReactions(b, actor, path).length
-  stage.path(path?.points, pos, Boolean(path && path.cost <= actor.movement && !risk))
+  const within = path && path.cost <= actor.movement + .00001
+  const reachable = path && travel(path, actor.movement)
+  const risk = reachable && movementReactions(b, actor, { points: reachable }).length
+  const color = risk ? '#ffc673' : '#fff4da'
+  const blocked = '#ff827a'
+  let segments = []
+  if (within) segments = [{ points: path.points, color }]
+  else if (path) segments = [
+    { points: reachable, color },
+    { points: [reachable.at(-1), ...path.points.slice(reachable.length - 1)], color: blocked },
+  ]
+  stage.path(pos, segments, within ? color : blocked)
   const label = document.querySelector('#preview')
   const projected = stage.project(pos, .14)
   if (label) {
     label.style.left = projected.x + 'px'
     label.style.top = projected.y + 'px'
-    label.textContent = path ? meters(path.cost) + (risk ? ' · 借機攻擊' : '') : '無法抵達'
-    label.classList.toggle('invalid', !path || path.cost > actor.movement || Boolean(risk))
+    label.textContent = path
+      ? meters(path.cost) + (risk ? ' · 借機攻擊' : '') + (within ? '' : ' · 距離不足')
+      : '無法抵達'
+    label.classList.toggle('invalid', !within)
   }
 }
 

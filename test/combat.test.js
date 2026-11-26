@@ -4,11 +4,12 @@ import { elements, obstacles, rules, species, xpForLevel } from '../src/game/con
 import { active, act, captureChance, evolve, forecast, healParty, modifier, movementReactions,
   selectAlly, startBattle, stat, unitById, validate } from '../src/game/combat.js'
 import { enemyCanPlay, enemyTurn } from '../src/game/ai.js'
-import { distance, router } from '../src/game/geometry.js'
+import { distance, movementBlocks, movementMask, router } from '../src/game/geometry.js'
 import { newGame, readSlot, writeSlot } from '../src/game/save.js'
 
 function fixture(map = 'glade') {
   const game = newGame()
+  game.collection = []
   const battle = startBattle(game, map, 22211)
   battle.active = 'hero'
   return { game, battle, player: active(battle) }
@@ -16,6 +17,41 @@ function fixture(map = 'glade') {
 
 const friend = (kind, id = 'friend-1') => ({
   id, kind, hp: 11, xp: 51, level: 2, evolved: false, statuses: { frost: 2 }, practice: false,
+})
+
+test('new games can summon each of the six elements while the hero starts alone', () => {
+  for (const kind of Object.keys(species)) {
+    const game = newGame()
+    const battle = startBattle(game, 'glade', 22211)
+    assert.equal(battle.active, 'hero')
+    assert.deepEqual(battle.units.filter(unit => unit.team === 'ally').map(unit => unit.kind), ['hero'])
+    assert.deepEqual(new Set(game.collection.map(unit => species[unit.kind].element)), new Set(Object.keys(elements)))
+    const id = 'starter-' + kind
+    const at = { x: -7.2, z: 0 }
+    assert.equal(act(game, { type: 'summon', id, at }).ok, true)
+    assert.equal(unitById(battle, id).hp, species[kind].hp)
+  }
+})
+
+test('the movement overlay uses path cost for detours and excludes occupied ground', () => {
+  const { battle, player } = fixture()
+  player.pos = { x: -4.2, z: .8 }
+  const budget = 4.8
+  const blocks = movementBlocks(battle.units, player)
+  const routeTo = router(player.pos, blocks)
+  const { bounds, columns, rows, mask } = movementMask(player.pos, budget, routeTo, .18)
+  function shaded(x, z) {
+    const col = Math.floor(columns * (x - bounds.minX) / (bounds.maxX - bounds.minX))
+    const row = Math.floor(rows * (z - bounds.minZ) / (bounds.maxZ - bounds.minZ))
+    return mask[row * columns + col]
+  }
+  assert.ok(shaded(-5.35, .8))
+  assert.ok(shaded(-4.9, 2.5))
+  assert.equal(shaded(-4.2, 3.4), 0)
+  assert.equal(shaded(-1.9, .8), 0)
+  assert.equal(shaded(.4, .8), 0)
+  assert.equal(routeTo({ x: .4, z: .8 }, budget), null)
+  assert.ok(routeTo({ x: .4, z: .8 }).cost > budget)
 })
 
 test('element cycle is complete and hit odds include natural 1 and 20', () => {
@@ -153,6 +189,15 @@ test('versioned saves reload a complete fight snapshot', () => {
   const { game } = fixture()
   assert.ok(writeSlot('1', game))
   assert.deepEqual(readSlot('1').game, game)
+  const original = structuredClone(game)
+  original.collection.push(friend('dino'))
+  mock.set('fairyland-2026.1', JSON.stringify({ version: 1, at: 30, game: original }))
+  const upgraded = readSlot('1')
+  assert.equal(upgraded.game.collection.length, 7)
+  assert.equal(upgraded.game.collection[0].id, 'friend-1')
+  assert.deepEqual(upgraded.game.battle, original.battle)
+  assert.ok(writeSlot('1', upgraded.game))
+  assert.equal(readSlot('1').game.collection.length, 7)
   mock.set('fairyland-2026.1', '{broken')
   assert.equal(readSlot('1'), null)
   delete globalThis.localStorage

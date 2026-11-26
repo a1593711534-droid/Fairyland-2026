@@ -37,9 +37,11 @@ export function router(start, blocks) {
     }
   }
   let graph
-  return end => {
-    if (!free(end, blocks)) return null
-    if (visible(start, end, blocks)) return { points: [start, end], cost: distance(start, end) }
+  return (end, limit = Infinity) => {
+    if (!end) return null
+    const direct = distance(start, end)
+    if (direct > limit || !free(end, blocks)) return null
+    if (visible(start, end, blocks)) return { points: [start, end], cost: direct }
     if (!graph) {
       const cost = points.map(() => Infinity)
       const previous = points.map(() => -1)
@@ -60,10 +62,10 @@ export function router(start, blocks) {
       graph = { cost, previous }
     }
     let best = -1
-    let total = Infinity
+    let total = limit
     for (let i = 0; i < points.length; i++) {
       const weight = graph.cost[i] + distance(points[i], end)
-      if (weight >= total || !visible(points[i], end, blocks)) continue
+      if (weight > total || (weight === total && best >= 0) || !visible(points[i], end, blocks)) continue
       best = i
       total = weight
     }
@@ -91,4 +93,27 @@ export function travel(path, amount) {
     amount -= segment
   }
   return points
+}
+
+// Sample the same continuous routes used by move validation for a ground overlay.
+export function movementMask(start, budget, routeTo, spacing = .14) {
+  const bounds = {
+    minX: Math.max(minX, start.x - budget - spacing),
+    maxX: Math.min(maxX, start.x + budget + spacing),
+    minZ: Math.max(minZ, start.z - budget - spacing),
+    maxZ: Math.min(maxZ, start.z + budget + spacing),
+  }
+  const w = bounds.maxX - bounds.minX
+  const h = bounds.maxZ - bounds.minZ
+  const columns = Math.ceil(w / spacing)
+  const rows = Math.ceil(h / spacing)
+  const mask = new Uint8Array(columns * rows)
+  for (let row = 0; row < rows; row++) {
+    const z = bounds.minZ + (row + .5) * h / rows
+    for (let column = 0; column < columns; column++) {
+      const x = bounds.minX + (column + .5) * w / columns
+      if (routeTo({ x, z }, budget)) mask[row * columns + column] = 255
+    }
+  }
+  return { bounds, columns, rows, mask }
 }

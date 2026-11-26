@@ -3,6 +3,7 @@ import json
 import math
 import random
 from pathlib import Path
+from math import exp
 
 import bpy
 from mathutils import Vector, noise
@@ -51,7 +52,7 @@ def activate(obj):
     bpy.context.view_layer.objects.active = obj
 
 
-def ovoid(name, at, scale, mat, twist=0, rough=0, rows=13, sides=24):
+def ovoid(name, at, scale, mat, twist=0, rough=0, rows=13, sides=24, sculpt=None):
     verts = []
     for i in range(rows + 1):
         latitude = math.pi * i / rows
@@ -63,7 +64,8 @@ def ovoid(name, at, scale, mat, twist=0, rough=0, rows=13, sides=24):
             growth = 1 + rough * noise.noise_vector(v * 3.1)[0]
             x = v.x * math.cos(twist) + v.z * math.sin(twist)
             z = -v.x * math.sin(twist) + v.z * math.cos(twist)
-            verts.append((at[0] + x * growth, at[1] + v.y * growth, at[2] + z * growth))
+            point = (at[0] + x * growth, at[1] + v.y * growth, at[2] + z * growth)
+            verts.append(sculpt(*point) if sculpt else point)
     faces = []
     for i in range(rows):
         for j in range(sides):
@@ -72,7 +74,20 @@ def ovoid(name, at, scale, mat, twist=0, rough=0, rows=13, sides=24):
     return mesh(name, verts, faces, [mat])
 
 
-def loft(name, sections, mat, sides=12, ripple=0):
+def loft(name, sections, mat, sides=12, ripple=0, steps=1):
+    if steps > 1:
+        keys = [(*position, width, depth) for position, width, depth in sections]
+        curve = []
+        for i in range(len(keys) - 1):
+            a = keys[max(0, i - 1)]
+            b, c = keys[i:i+2]
+            d = keys[min(len(keys)-1, i+2)]
+            for j in range(steps):
+                t = j / steps
+                curve.append(tuple(.5 * ((2*w) + (-q+x)*t + (2*q-5*w+4*x-y)*t*t + (-q+3*w-3*x+y)*t*t*t)
+                                   for q,w,x,y in zip(a,b,c,d)))
+        curve.append(keys[-1])
+        sections = [(v[:3], max(.002, v[3]), max(.002, v[4])) for v in curve]
     verts, faces = [], []
     for index, (position, width, depth) in enumerate(sections):
         center = Vector(position)
@@ -86,7 +101,7 @@ def loft(name, sections, mat, sides=12, ripple=0):
         forward = direction.cross(right)
         for j in range(sides):
             angle = TAU * j / sides
-            wobble = 1 + ripple * (math.cos(angle*5 + index*.37) + .4*math.sin(angle*3-index))
+            wobble = 1 + ripple * (math.cos(angle*5 + index*.37/steps) + .4*math.sin(angle*3-index/steps))
             v = center + right*math.cos(angle)*width*wobble + forward*math.sin(angle)*depth*wobble
             verts.append(v)
         if index:
@@ -123,6 +138,75 @@ def fuse(parts, name, mat, size=.07):
     for face in obj.data.polygons:
         face.use_smooth = True
     return obj
+
+
+def blend(a, b, amount):
+    t = min(1, max(0, amount))
+    return [x + (y - x) * t for x, y in zip(a,b)]
+
+
+def soft(low, high, value):
+    t = min(1, max(0, (value-low)/(high-low)))
+    return t*t*(3-2*t)
+
+
+def pigment(obj, base, apply):
+    tint = base.copy()
+    colors = obj.data.color_attributes.new('Surface pigment', 'BYTE_COLOR', 'POINT')
+    nodes = tint.node_tree.nodes
+    paint = nodes.new('ShaderNodeVertexColor')
+    paint.layer_name = colors.name
+    tint.node_tree.links.new(paint.outputs['Color'], nodes.get('Principled BSDF').inputs['Base Color'])
+    obj.data.materials[0] = tint
+    for vert in obj.data.vertices:
+        color = apply(vert.co)
+        colors.data[vert.index].color = (*(min(1, max(0, c)) for c in color), 1)
+
+
+def grain(v, scale, amount):
+    return 1 + noise.noise_vector(v * scale + Vector((.197, .819, 1.421)))[0] * amount
+
+
+def surface_texture(obj, mat, scale, strength):
+    pigment(obj, mat, lambda v: [c*grain(v, scale, strength) for c in mat.diffuse_color[:3]])
+
+
+def carve_shell(height, evolved, dark, base, accent):
+    sides, rings = 84, 38
+    width, depth = .66+.21*evolved, .78+.17*evolved
+    seams = [(.47*math.cos(TAU*i/7), .47*math.sin(TAU*i/7)) for i in range(7)]
+    seams.append((0,0))
+
+    def relief(u, v):
+        d = sorted(math.hypot(u-x,v-y) for x,y in seams)[:2]
+        return soft(.018,.094,d[1]-d[0])
+
+    verts, faces = [], []
+    for i in range(rings+1):
+        r = i/rings
+        for j in range(sides):
+            angle = j*TAU/sides
+            u,v = r*math.cos(angle), r*math.sin(angle)
+            ridge = relief(u,v)
+            z = height+.10+(.61+.13*evolved)*(1-r*r)**.72
+            z += .028*ridge + .018*math.sin(angle*7)*r
+            z -= .105*soft(.88,1.0,r)
+            verts.append((u*width, .13+v*depth, z))
+    for i in range(rings):
+        for j in range(sides):
+            a,b=i*sides+j,i*sides+(j+1)%sides
+            faces.append((a,a+sides,b+sides,b))
+    shell = mesh('Carved shell with connected scute relief', verts, faces, [dark])
+    def scute_color(p):
+        u,v = p.x/width,(p.y-.13)/depth
+        radius = math.hypot(u,v)
+        t = relief(u,v)
+        paint = blend(dark.diffuse_color[:3], base.diffuse_color[:3], t*.82)
+        paint = blend(paint, accent.diffuse_color[:3], .32*soft(.72,.98,radius))
+        streak = .99 + math.sin(98*radius+math.cos(u*8))*t*.075
+        return [c*grain(p, 57, .24)*streak for c in paint]
+    pigment(shell, dark, scute_color)
+    return shell
 
 
 def skin(obj, rig, weight):
@@ -314,7 +398,7 @@ def animal(kind, evolved):
     def detail(name, at, scale, mat, bone, tilt=0):
         return fix(ell(name, at, scale, mat, tilt), bone)
     def trim(name, sections, mat, bone, sides=12):
-        return fix(loft(name, sections, mat, sides, .032), bone)
+        return fix(loft(name, sections, mat, sides, .032, steps=3), bone)
 
     bodylength = {'turtle':.80, 'dino':.73, 'cat':.69, 'bird':.49, 'mouse':.47, 'dog':.70}[kind]
     width = {'turtle':.56, 'dino':.41, 'cat':.35, 'bird':.37, 'mouse':.36, 'dog':.38}[kind]+.10*E
@@ -329,9 +413,6 @@ def animal(kind, evolved):
         parts.append(ell('Muzzle', (0,heady-headw*.70,headz-headw*.26), (headw*.71,muzzle_depth,headw*.48)))
         if kind in ('dog','cat','mouse'):
             detail('Nose', (0,heady-headw*.70-muzzle_depth*.99,headz-headw*.17),(.075,.045,.039),eye,'Head')
-            for side in (-1,1):
-                detail('Cream muzzle', (side*headw*.29,heady-headw*.70-muzzle_depth*.74,headz-headw*.33),
-                       (headw*.42,.10,.104),lightmat,'Head')
     for side, suffix in ((-1,'L'),(1,'R')):
         for key,y in [('Front',front_y),('Back',hind_y)]:
             if kind == 'bird' and key == 'Front':
@@ -352,9 +433,12 @@ def animal(kind, evolved):
         eyex = side * headw*.61
         eyey = heady - headw*.77
         eyez = headz+headw*.16
-        detail('Eye socket', (eyex,eyey,eyez),(.095,.064,.101),darkmat,'Head',side*.19)
-        detail('Glossy eye', (eyex,eyey-.033,eyez+.002),(.064,.043,.073),eye,'Head',side*.19)
-        detail('Glint', (eyex-.018,eyey-.067,eyez+.025),(.018,.011,.018),glint,'Head')
+        detail('Eye socket', (eyex,eyey,eyez),(.088,.043,.068),darkmat,'Head',side*.23)
+        detail('Glossy eye', (eyex,eyey-.034,eyez+.002),(.060,.035,.056),eye,'Head',side*.23)
+        detail('Glint', (eyex-.017,eyey-.064,eyez+.019),(.013,.007,.014),glint,'Head')
+        trim('Sculpted upper eyelid', [((eyex-.083,eyey-.017,eyez-.014),.011,.011),
+            ((eyex-.031,eyey-.060,eyez+.055),.014,.013),((eyex+.029,eyey-.063,eyez+.055),.012,.012),
+            ((eyex+.082,eyey-.019,eyez-.008),.003,.005)],skinmat,'Head',8)
         if kind in ('cat','dog','mouse'):
             ear = .29 if kind == 'cat' else .43 if kind == 'dog' else .23
             if kind == 'mouse':
@@ -371,14 +455,8 @@ def animal(kind, evolved):
                 trim('Inner ear', [((side*headw*.65,heady-.073,headz+headw*.64),.095,.035),
                     ((side*headw*.87,heady-.012,headz+headw*.71+ear*.44),.085,.038),
                     ((tipx*.97,heady+.103,tipz-.03),.008,.009)],rose,'Head')
-            detail('Cream chest', (side*.10,heady*.73-.15,chest+.07), (.18,.16,.27+E*.09),lightmat,'Body',side*.13)
     if kind == 'turtle':
-        detail('Shell dome', (0,.13,chest+.16),(.64+.20*E,.76+.14*E,.50+.12*E),darkmat,'Body')
-        for j in range(9 if E else 7):
-            angle = TAU*j/(9 if E else 7)
-            x, y = math.cos(angle), math.sin(angle)
-            detail('Shell scute', (x*(.38+.07*E),.13+y*(.43+.06*E),chest+.52+.10*E),
-                   (.17+.03*E,.18,.11),skinmat,'Body',x*.42)
+        fix(carve_shell(chest, E, darkmat, skinmat, lightmat), 'Body')
         if E:
             for j in range(7):
                 x = (j-3)*.143
@@ -425,7 +503,37 @@ def animal(kind, evolved):
             trim('Crystal spine', [((0,y,chest+.22),.12,.10),((.034,y+.13,chest+.51),.061,.057),
                  ((.052,y+.24,chest+.68-j*.021),.008,.01)],lightmat,'Body',6)
 
-    body = fuse(parts, 'Sculpted continuous anatomy', skinmat, .060)
+    if kind in ('cat','dog'):
+        for side in (-1,1):
+            for i in range(4):
+                z = headz - headw*.21 - i*.084
+                x = side*(headw*.73-i*.011)
+                y = heady+.088+i*.052
+                parts.append(loft('Sculpted cheek fur', [((x*.87,y-.083,z+.035),.105,.104),
+                    ((x,y,z-.01),.086,.073),((x*1.26,y+.133,z-.11),.016,.018)],
+                    skinmat,11,.044,steps=3))
+    body = fuse(parts, 'Sculpted continuous anatomy', skinmat, .032)
+
+    def coat(v):
+        base = skinmat.diffuse_color[:3]
+        shade = darkmat.diffuse_color[:3]
+        accent = lightmat.diffuse_color[:3]
+        scale = 1.6 if kind == 'dino' else 2.6
+        dapple = noise.noise_vector(Vector((v.x*9, v.y*6, v.z*10)))[0]
+        back = soft(chest*.88, chest*1.65, v.z)*soft(heady+.25,.48,v.y)
+        belly = (1-soft(chest*.61,chest*1.09,v.z))*soft(.16,.63,-v.y)
+        muzzle = soft(-heady+headw*.32,-heady+headw*.83,-v.y)*(1-soft(headz-headw*.18,headz+headw*.05,v.z))
+        fringe = max(belly*.73,muzzle*.76)
+        if kind == 'cat':
+            stripe = (.5+.5*math.sin(v.y*33+abs(v.x)*8+v.z*4))**4
+            back += stripe*soft(.12,.31,abs(v.x))*.29
+        elif kind in ('mouse','dino'):
+            back += soft(.18,.55,dapple)*.22
+        style = blend(base, shade, back*.62)
+        style = blend(style, accent, fringe)
+        return [value*grain(v, 38, .20)*(1+scale*dapple*.06) for value in style]
+
+    pigment(body, skinmat, coat)
     rig = skeleton(kind, height, hind_y, front_y, span, bird=kind=='bird')
     def body_weights(v):
         bone = 'Body'
@@ -465,7 +573,7 @@ def person():
     def ell(name, at, size, mat, bone='Body', twist=0):
         return fix(ovoid(name,at,size,mat,twist,.028),bone)
     def tube(name, sections, mat, bone='Body', sides=16):
-        return fix(loft(name,sections,mat,sides,.024),bone)
+        return fix(loft(name,sections,mat,sides,.036,steps=3),bone)
     tube('Woven field coat', [((0,.025,.98),.36,.28),((0,.035,1.18),.35,.24),
          ((0,.018,1.46),.24,.18),((0,.017,1.71),.34,.21),((0,.035,1.84),.40,.20),
          ((0,.025,1.96),.24,.16)],cloth,sides=32)
@@ -487,7 +595,16 @@ def person():
               ((s*.52,-.044,1.43),.10,.080),((s*.54,-.11,1.27),.074,.073)], cloth, arm)
         tube('Leather bracer', [((s*.50,-.035,1.45),.103,.087),((s*.54,-.10,1.31),.085,.078),
               ((s*.55,-.12,1.27),.085,.080)], boot, arm)
-        ell('Hand', (s*.56,-.14,1.19),(.069,.074,.10),skinmat,arm,.12*s)
+        palm = ovoid('Palm', (s*.555,-.138,1.204),(.066,.061,.083),skinmat, s*.13)
+        hand_parts = [palm]
+        for finger in range(4):
+            y = -.182 + finger*.023
+            z = 1.141 + abs(finger-1)*.012
+            hand_parts.append(loft('Finger', [((s*.566,y,z+.047),.022,.018),
+                ((s*.581,y,z-.009),.018,.016),((s*.566,y+.008,z-.037),.012,.013)],skinmat,8,steps=2))
+        hand_parts.append(loft('Thumb', [((s*.521,-.173,1.246),.035,.024),
+             ((s*.499,-.198,1.198),.022,.018),((s*.513,-.208,1.170),.012,.016)],skinmat,10,steps=3))
+        fix(fuse(hand_parts, 'Hand with sculpted digits', skinmat, .009),arm)
         tube('Trousers', [((s*.155,.02,1.13),.145,.137),((s*.185,.046,.81),.121,.112),
               ((s*.19,.02,.51),.101,.094),((s*.206,.01,.29),.084,.078)],cloth,leg)
         tube('Soft riding boot', [((s*.19,.025,.52),.113,.11),((s*.21,-.005,.30),.105,.095),
@@ -495,8 +612,12 @@ def person():
         ell('Boot stud', (s*.21,-.079,.44),(.042,.022,.025),gold,leg)
         ell('Ear', (s*.217,-.058,2.135),(.055,.049,.089),skinmat,'Head',s*.19)
         ell('Study of hair', (s*.19,.034,2.24),(.103,.19,.25),hair,'Head',s*.22)
-        ell('Eye', (s*.088,-.268,2.165),(.042,.019,.034),ink,'Head')
-        ell('Eye gleam', (s*.088-.009,-.285,2.174),(.012,.007,.012),white,'Head')
+        ell('Ivory sclera', (s*.081,-.246,2.160),(.044,.020,.021),white,'Head',s*.08)
+        ell('Iris', (s*.080,-.263,2.160),(.020,.010,.020),ink,'Head')
+        ell('Eye gleam', (s*.080-.006,-.272,2.167),(.006,.004,.006),white,'Head')
+        tube('Upper eyelid', [((s*.041,-.254,2.154),.003,.003),
+             ((s*.077,-.267,2.177),.008,.005),((s*.109,-.262,2.170),.007,.004),
+             ((s*.126,-.239,2.155),.003,.003)],hair,'Head',8)
     for side, suffix in ((-1,'L'),(1,'R')):
         arm, leg = 'Front'+suffix, 'Back'+suffix
         tube('Bound cuff seam', [((side*.519,-.078,1.361),.089,.079),
@@ -508,9 +629,26 @@ def person():
             ((side*.05,-.241,1.55),.008,.008)],stitch,sides=8)
         tube('Brow', [((side*.036,-.268,2.225),.008,.007),
             ((side*.089,-.261,2.232),.012,.011),((side*.128,-.238,2.221),.005,.005)],hair,'Head',8)
-    ell('Mouth contour', (0,-.255,2.059),(.044,.013,.009),lip,'Head')
-    ell('Face planes', (0,-.055,2.15),(.222,.217,.264),skinmat,'Head')
-    ell('Nose bridge', (0,-.268,2.114),(.055,.066,.052),skinmat,'Head')
+    def facial_planes(x,y,z):
+        forward = soft(-.15,.205,-y)
+        def form(px, pz, width, depth):
+            return exp(-((x-px)/width)**2-((z-pz)/depth)**2)
+        bridge = .031*form(0,2.159,.029,.069)
+        nose = .061*form(0,2.123,.046,.029)
+        cheeks = .018*(form(.112,2.106,.061,.045)+form(-.112,2.106,.061,.045))
+        temples = .032*(form(.084,2.168,.040,.039)+form(-.084,2.168,.040,.039))
+        chin = .019*form(0,2.012,.096,.043)
+        lip = .008*form(0,2.062,.052,.018)
+        return (x, y - forward*(bridge+nose+cheeks+chin+lip-temples), z)
+    face = ovoid('Sculpted facial planes', (0,-.055,2.15),(.218,.216,.251),skinmat,
+        rows=46,sides=76,sculpt=facial_planes)
+    def complexion(v):
+        r = exp(-((abs(v.x)-.123)/.062)**2-((v.z-2.110)/.047)**2)*soft(.19,.25,-v.y)
+        return blend(skinmat.diffuse_color[:3], (.72,.21,.18), r*.21)
+    pigment(face, skinmat, complexion)
+    fix(face,'Head')
+    tube('Lip line', [((-.039,-.256,2.057),.002,.003),((-.015,-.271,2.060),.003,.004),
+         ((.017,-.273,2.060),.003,.004),((.043,-.254,2.064),.002,.002)],lip,'Head',9)
     ell('Hair cap', (-.029,.028,2.30),(.244,.217,.21),hair,'Head',-.24)
     for j in range(5):
         x = -.146+j*.060
@@ -523,8 +661,25 @@ def person():
     tube('Carved rowan wand', [((.57,-.09,1.08),.037,.033),((.57,-.17,1.22),.039,.037),
          ((.58,-.40,1.37),.034,.030),((.62,-.56,1.53),.020,.021)],boot,'FrontR',10)
     ell('Ember wand tip', (.62,-.56,1.53),(.054,.05,.065),gem,'FrontR')
+    coat_parts = [obj for obj, _ in pinned if obj.name.startswith(('Woven field coat','Sleeve'))]
+    cape_parts = [obj for obj, _ in pinned if obj.name.startswith(('Shoulder cape','Trailing cloak'))]
+    hair_parts = [obj for obj, _ in pinned if obj.name.startswith(('Hair cap','Swept fringe','Study of hair','Loose braid'))]
+    pinned = [(obj,bone) for obj,bone in pinned if obj not in coat_parts + cape_parts + hair_parts]
+    coat = fuse(coat_parts, 'Tailored coat with joined shoulder topology', cloth,.021)
+    cape = fuse(cape_parts, 'Continuous shoulder mantle and cape', cloak,.018)
+    hair_mesh = fuse(hair_parts, 'Welded sculpt of swept hair and braid', hair,.012)
+    surface_texture(coat,cloth,68,.35)
+    surface_texture(cape,cloak,49,.31)
+    pigment(hair_mesh,hair,lambda v: [
+        c*grain(v,83,.24)*(1+.16*math.sin(v.x*185 + v.z*39 + v.y*25))
+        for c in hair.diffuse_color[:3]
+    ])
     rig = skeleton('Lio',2.46,.02,.0,.19,person=True)
-    for obj,bone in pinned:
+    def coat_skin(v):
+        arm = soft(.275,.485,abs(v.x))*soft(1.13,1.37,v.z)
+        return [('FrontR' if v.x>0 else 'FrontL',arm),('Body',1-arm)]
+    skin(coat,rig,coat_skin)
+    for obj,bone in [*pinned,(cape,'Body'),(hair_mesh,'Head')]:
         skin(obj,rig,lambda v, bone=bone: [(bone,1)])
     animate(rig,'hero')
     export('hero',True)
