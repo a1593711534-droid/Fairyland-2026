@@ -5,8 +5,8 @@ from mathutils import Quaternion, Vector
 
 CLIPS = {
     'hero': {'idle_watch': 84, 'idle_check_wand': 98},
-    'dog': {'idle_wag': 70, 'idle_sit': 146, 'idle_listen': 80},
-    'cat': {'idle_groom': 121, 'idle_crouch': 120, 'idle_tail': 93},
+    'dog': {'idle_wag': 70, 'idle_sit': 146, 'idle_listen': 80, 'idle_scent': 78},
+    'cat': {'idle_groom': 121, 'idle_crouch': 120, 'idle_tail': 93, 'idle_stretch': 116},
     'turtle': {'idle_retreat': 157, 'idle_browse': 139},
     'dino': {'idle_sniff': 88, 'idle_alert': 100},
     'bird': {'idle_preens': 109, 'idle_wings': 71, 'idle_scan': 66},
@@ -14,6 +14,7 @@ CLIPS = {
 }
 
 TURN_FRAMES = {'dog': 23, 'cat': 24, 'turtle': 40, 'dino': 31, 'bird': 22, 'mouse': 19, 'hero': 26}
+THREAT_FRAMES = {'dog': 48, 'cat': 45, 'turtle': 48, 'dino': 53, 'bird': 43, 'mouse': 39}
 TURN_ANGLE = math.tau/6
 UP = Vector((0,0,1))
 
@@ -121,6 +122,56 @@ def turn_pose(bones, species, sign, t):
         bend(bones['FrontR'],.12*settle,z=.16*settle)
 
 
+def defensive_pose(bones, species, clip, t):
+    body,head,tail = (bones[k] for k in ('Body','Head','Tail'))
+    guard = clip=='guard'
+    inhale = .5-.5*math.cos(t*math.tau)
+    ready = 1 if guard else window(.01,.17,.76,1,t)
+    warning = 0 if guard else window(.18,.29,.53,.81,t)
+    pulse = warning * (1 + .12*math.sin(t*math.tau*6))
+    if species=='dog':
+        grounding(bones,ready,.10,.115,-.021,.028,-.092)
+        translate(head,y=-.085*pulse,z=.052*pulse)
+        bend(head,.10*ready-.19*pulse,y=-.04*inhale)
+        bend(tail,.07*ready-.21*pulse)
+        bend(bones['TailTip'],-.10*ready+.31*pulse)
+    elif species=='cat':
+        grounding(bones,ready,.18,.146,.065,.044,-.029,.23*pulse)
+        translate(head,y=-.058*pulse,z=-.068*pulse)
+        bend(head,.29*ready-.19*pulse)
+        bend(tail,.36*ready,z=.31*pulse-.08*inhale)
+        bend(bones['TailTip'],.26*ready,z=-.22*pulse)
+    elif species=='bird':
+        translate(body,z=-.041*ready+.11*pulse)
+        translate(head,y=-.074*ready-.19*pulse,z=.021*inhale)
+        bend(head,-.12*ready-.22*pulse)
+        for side,sign in (('L',-1),('R',1)):
+            bend(bones['Front'+side],.08*ready+.43*pulse,z=sign*(.16*ready+.68*pulse))
+        bend(tail,.25*ready+.31*pulse)
+    elif species=='turtle':
+        translate(head,y=.135*ready-.34*pulse,z=.04*pulse)
+        bend(head,.12*ready-.30*pulse)
+        for side,sign in (('L',-1),('R',1)):
+            bend(bones['Front'+side],-.12*pulse,z=.11*sign*ready)
+        bend(tail,.08*ready)
+    elif species=='dino':
+        translate(body,z=-.037*ready+.072*pulse)
+        translate(head,y=-.041*ready-.17*pulse,z=.12*pulse)
+        bend(head,.09*ready-.43*pulse)
+        for side,sign in (('L',-1),('R',1)):
+            bend(bones['Front'+side],-.15*ready-.45*pulse,z=.37*sign*pulse)
+        bend(tail,-.12*ready,z=.13*inhale+.25*pulse)
+    elif species=='mouse':
+        translate(body,z=.046*ready+.11*pulse)
+        bend(head,-.24*ready-.16*pulse)
+        for side,sign in (('L',-1),('R',1)):
+            paw = .23 * warning * math.sin(t*math.tau*5+sign)
+            bend(bones['Front'+side],-.24*ready-.31*pulse+paw,z=.24*sign*pulse)
+        bend(tail,.34*ready,z=-.20*pulse)
+    if 'Jaw' in bones:
+        bend(bones['Jaw'],.44*pulse)
+
+
 def pose(rig, species, clip, t):
     bones = rig.pose.bones
     for bone in bones:
@@ -132,6 +183,9 @@ def pose(rig, species, clip, t):
     body, head, tail = (bones[key] for key in ('Body','Head','Tail'))
     if clip.startswith('turn_'):
         turn_pose(bones,species,1 if clip=='turn_right' else -1,t)
+        return
+    if clip in ('guard','threat_display'):
+        defensive_pose(bones,species,clip,t)
         return
     if clip == 'idle':
         # A chest expansion, with feet and head position held at rest.
@@ -157,6 +211,12 @@ def pose(rig, species, clip, t):
             first = window(.10,.22,.38,.47,t)
             second = window(.49,.61,.77,.92,t)
             bend(head,.13*first-.055*second,.16*first,-.42*first+.48*second)
+        elif clip == 'idle_scent':
+            reach=window(.05,.24,.71,.92,t)
+            grounding(bones,reach,.20,.065,-.091,-.02,-.105)
+            translate(head,y=-.11*reach,z=-.094*reach+.021*reach*math.sin(t*math.tau*5))
+            bend(head,.30*reach)
+            bend(tail,.18*reach,z=.28*reach*math.sin(t*math.tau*2))
     elif species == 'cat':
         if clip == 'idle_crouch':
             low = window(.06,.26,.77,.95,t)
@@ -174,6 +234,11 @@ def pose(rig, species, clip, t):
             bend(tail,.28*curl,z=-.54*curl+.19*curl*math.sin(t*math.tau*2))
             bend(bones['TailTip'],.13*curl,z=.37*curl+.14*curl*math.sin(t*math.tau*2-.81))
             bend(head,.06*curl,z=.29*window(.32,.45,.66,.88,t))
+        elif clip == 'idle_stretch':
+            stretch=window(.07,.27,.67,.93,t)
+            grounding(bones,stretch,.44,.119,-.027,.13,-.24)
+            bend(head,.16*stretch)
+            bend(tail,.31*stretch,z=.07*stretch)
     elif species == 'turtle':
         if clip == 'idle_retreat':
             tuck = window(.09,.26,.64,.97,t)

@@ -74,6 +74,8 @@ if __name__=='__main__':
     rim = np.exp(-((scale_y-.22-.77*scale_x**2)/.065)**2)
     write(normals(keel*.21-rim*.089 + fine*.028,2.7),'scales','normal',85)
     write(image(151 - keel*17 + rim*15 + fine*9),'scales','rough',80)
+    scale_pigment=225 + 20*keel - 34*rim + 8*coarse + 5*fine
+    write(image(scale_pigment),'scales','color',86)
     nap = np.cos(x*94+.95*np.sin(y*7)+2.6*mid)
     fine_nap = np.cos(x*143+np.sin(y*11)+1.6*fine)
     write(normals(nap*.087+fine_nap*.029 + .053*mid,1.65),'fur','normal',84)

@@ -1,4 +1,5 @@
 import { distance, lineOfSight } from '../game/geometry.js'
+import { areOpponents } from '../game/combat.js'
 
 export const TURN_ANGLE = Math.PI / 3
 export const bearing = (a, b) => Math.atan2(b.x - a.x, b.z - a.z)
@@ -23,7 +24,7 @@ export function nearbyInterest(origin, candidates, maxDistance = 7.5) {
 export function initialBearing(unit, candidates) {
   const others = candidates.filter(other => other.id !== unit.id && !other.dismissed && other.hp > 0)
   const seen = nearbyInterest(unit.pos, others, 40)
-  const toward = seen.find(other => other.team !== unit.team) ?? seen[0]
+  const toward = seen.find(other => areOpponents(unit, other)) ?? seen[0]
   return toward ? bearing(unit.pos, toward.pos) : bearing(unit.pos, { x: .1, z: 0 })
 }
 

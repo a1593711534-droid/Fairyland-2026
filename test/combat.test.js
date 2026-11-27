@@ -350,8 +350,12 @@ test('all twelve Blender forms and the hero provide exported action clips', asyn
     const root = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)))
     assert.ok(root.meshes.length && root.skins.length)
     const all = root.animations.map(a => a.name)
-    assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(),
-      ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','turn_left','turn_right','walk'])
+    const actions = ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','turn_left','turn_right','walk']
+    if (file !== 'hero') {
+      actions.push('guard', 'threat_display')
+      assert.ok(root.animations.find(action => action.name === 'threat_display').channels.length >= 4)
+    }
+    assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(), actions.sort())
     const sequence = idleSequence(file, 'inspection', true)
     for (let i = 0; i < 14; i++) {
       const { clip, pause } = sequence.next()

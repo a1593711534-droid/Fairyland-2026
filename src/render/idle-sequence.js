@@ -3,11 +3,11 @@ const profiles = {
     quick: .29, neck: .48, pace: 1, rest: ['idle_check_wand', 'idle_watch'], alert: ['idle_watch'],
   },
   dog: {
-    quick: .20, neck: .64, pace: 1, rest: ['idle_sit', 'idle_wag', 'idle_listen'],
+    quick: .20, neck: .64, pace: 1, rest: ['idle_sit', 'idle_wag', 'idle_listen', 'idle_scent'],
     alert: ['idle_listen'], social: ['idle_wag', 'idle_listen'],
   },
   cat: {
-    quick: .17, neck: .59, pace: 1.02, rest: ['idle_groom', 'idle_tail', 'idle_crouch'],
+    quick: .17, neck: .59, pace: 1.02, rest: ['idle_groom', 'idle_tail', 'idle_crouch', 'idle_stretch'],
     alert: ['idle_crouch', 'idle_tail'], social: ['idle_tail'],
   },
   turtle: {

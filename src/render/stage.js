@@ -6,6 +6,7 @@ import { distance, lineOfSight } from '../game/geometry.js'
 import { elementalEffect } from './elemental-effects.js'
 import { idleSequence } from './idle-sequence.js'
 import { advanceBearing, angularDifference, bearing, observedPoint, TURN_ANGLE, turnProgress } from './attention.js'
+import { Vigilance } from './vigilance.js'
 import { applySurfaces, fireflies, surfaceTime } from './surfaces.js'
 import { artURL } from './art-url.js'
 import { fireSummon, warmFire } from './fire-summon.js'
@@ -226,6 +227,7 @@ export class Stage {
       idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost), gaze: 0,
       nextLook: this.clock + (idle?.firstDelay ?? 2) * .64, headBase: new T.Quaternion(), lids: [],
       blinkAt: this.clock + (idle?.firstDelay ?? 2) * .92 }
+    if (idle && options.team) unit.vigilance = new Vigilance(name, idle.sample)
     if (!options.ghost) {
       unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
       unit.shadow.visible = !options.hidden
@@ -360,7 +362,7 @@ export class Stage {
     const instigator = this.units.get(source)
     const where = { x: point.x, z: point.z }
     for (const unit of this.units.values()) {
-      if (unit.id === source || !unit.idle || unit.dead || !unit.pivot.visible || !unit.currentName) continue
+      if (unit.id === source || !unit.idle || unit.focus || unit.dead || !unit.pivot.visible || !unit.currentName) continue
       const away = distance(unit.pivot.position, where)
       if (away > radius || away < .16 || !lineOfSight(unit.pivot.position, where)) continue
       const ally = unit.team === instigator?.team && unit.team === 'ally'
@@ -371,6 +373,24 @@ export class Stage {
       this.notice(unit, where, ally || mood === 'arrival' ? 'social' : urgent ? 'alert' : 'watch', urgent)
       unit.nextLook = Math.max(unit.nextLook, this.clock + 3.4)
     }
+  }
+
+  attacked(id, attacker) {
+    const unit = this.units.get(id)
+    if (!unit || !unit.vigilance || this.reduced) return
+    unit.vigilance.attacked(unit, this.units.get(attacker), this.clock)
+    unit.focusAt = 0
+  }
+
+  updateFocus(unit) {
+    if (!unit.vigilance) return
+    if (this.reduced) {
+      unit.focus = null
+      return
+    }
+    if (this.clock < (unit.focusAt ?? 0)) return
+    unit.focusAt = this.clock + .108
+    unit.focus = unit.vigilance.update(unit, this.units, this.clock)
   }
 
   updateFacing(unit, dt) {
@@ -385,17 +405,26 @@ export class Stage {
     }
 
     const notice = unit.notice
-    const looking = !this.reduced && unit.idle && !unit.travel && notice && this.clock >= notice.start &&
-      this.clock < notice.end && (current?.startsWith('idle') || turning)
+    const focus = unit.focus
+    const alertPose = current === 'guard' || current === 'threat_display'
+    const looking = !this.reduced && unit.idle && !unit.travel && (focus || notice && this.clock >= notice.start &&
+      this.clock < notice.end) && (current?.startsWith('idle') || alertPose || turning)
     let gaze = 0
     if (looking) {
-      const angle = angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, notice.point))
+      const angle = angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, (focus ?? notice).point))
       const limit = unit.idle.neck
-      gaze = Math.max(-limit, Math.min(limit, angle)) * (turning ? .54 : 1)
-      if (!turning && notice.steps > 0 && current === 'idle' && this.clock >= notice.stepAt && Math.abs(angle) > .73) {
-        notice.steps--
-        notice.stepAt = this.clock + .68
-        notice.end = Math.max(notice.end, this.clock + 1.62)
+      const scan = focus?.scan ?? 0
+      const offset = Math.abs(angle + scan) > limit && Math.abs(angle - scan) < Math.abs(angle + scan) ? -scan : scan
+      gaze = Math.max(-limit, Math.min(limit, angle + offset)) * (turning ? .54 : 1)
+      const focusedStep = focus && this.clock >= (unit.focusStepAt ?? 0)
+      const fleetingStep = !focus && notice.steps > 0 && this.clock >= notice.stepAt
+      if (!turning && (focusedStep || fleetingStep) && (current === 'idle' || current === 'guard') && Math.abs(angle) > .73) {
+        if (focusedStep) unit.focusStepAt = this.clock + .66
+        else {
+          notice.steps--
+          notice.stepAt = this.clock + .68
+          notice.end = Math.max(notice.end, this.clock + 1.62)
+        }
         const direction = Math.sign(angle)
         const name = direction > 0 ? 'turn_right' : 'turn_left'
         if (unit.actions.has(name)) {
@@ -430,18 +459,31 @@ export class Stage {
     const action = unit.current
     if (!action || !unit.pivot.visible) return
     if (unit.returnToRest && action.time >= action.getClip().duration - .001) {
+      this.play(unit.id, unit.focus && unit.actions.has('guard') ? 'guard' : 'idle', false)
+      return
+    }
+    const current = unit.currentName
+    const resting = current.startsWith('idle') || current === 'guard' || current === 'threat_display'
+    if (this.reduced) {
+      if ((resting || current.startsWith('turn_')) && current !== 'idle') this.play(unit.id, 'idle', false)
+      return
+    }
+    if (!unit.idle || unit.travel) return
+    const focus = unit.focus
+    if (focus) {
+      if (!resting || current === 'threat_display') return
+      if (focus.display && Math.abs(angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, focus.point))) < .75 &&
+          unit.actions.has('threat_display')) {
+        unit.vigilance.consumeDisplay()
+        focus.display = false
+        this.play(unit.id, 'threat_display')
+      } else if (current !== 'guard' && unit.actions.has('guard')) this.play(unit.id, 'guard', false)
+      return
+    }
+    if (current === 'guard') {
       this.play(unit.id, 'idle', false)
       return
     }
-    if (this.reduced && unit.currentName.startsWith('turn_')) {
-      this.play(unit.id, 'idle', false)
-      return
-    }
-    if (this.reduced && unit.currentName.startsWith('idle')) {
-      if (unit.currentName !== 'idle') this.play(unit.id, 'idle', false)
-      return
-    }
-    if (this.reduced || !unit.idle || unit.travel) return
     const urgent = unit.notice?.urgent && this.clock >= unit.notice.start
     if (urgent && ['idle_sit','idle_groom','idle_browse','idle_preens','idle_check_wand'].includes(unit.currentName)) {
       this.play(unit.id, 'idle', false)
@@ -727,6 +769,7 @@ export class Stage {
         unit.shadow.position.z = unit.pivot.position.z
       }
       if (unit.current && unit.pivot.visible) {
+        this.updateFocus(unit)
         this.updateFacing(unit, dt)
         this.updateIdle(unit, dt)
         this.updateBlink(unit)

@@ -625,6 +625,7 @@ async function animate(events) {
         stage.play(outcome.target, outcome.dead ? 'death' : 'hit')
         const spell = skills[outcome.skill]
         const at = pointOf(outcome.target)
+        if (spell && !outcome.dead) stage.attacked(outcome.target, outcome.actor)
         if (!settings.reduced && spell?.element && at && !spell.radius) stage.effect(at, spell.element, 'impact')
         stage.signal(at, outcome.actor, 'alert', 5.2)
         floatText(outcome.target, '−' + outcome.amount)
