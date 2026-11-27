@@ -10,6 +10,7 @@ writeFileSync(new URL('layout.json', cache), JSON.stringify({ obstacles, waypoin
 const filter = process.argv.slice(2)
 const modelNames = filter.flatMap(name => {
   if (name === 'world') return ['world', 'canopy']
+  if (name === 'continent') return [name]
   return name === 'hero' ? [name] : [name, name + '-evolved']
 })
 const cwd = fileURLToPath(new URL('..', import.meta.url))

@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
 import { distance, lineOfSight } from '../game/geometry.js'
+import { continentView } from '../game/overworld.js'
 import { elementalEffect } from './elemental-effects.js'
 import { idleSequence } from './idle-sequence.js'
 import { advanceBearing, angularDifference, bearing, observedPoint, TURN_ANGLE, turnProgress } from './attention.js'
@@ -26,7 +27,7 @@ const asset = name => {
 
 const presets = {
   choose: { x: 0, z: 0, azimuth: .30, elevation: .21, zoom: 3.4 },
-  world: { x: .1, z: .4, azimuth: .25, elevation: 1.00, zoom: 17.6 },
+  world: continentView,
   battle: { x: -.2, z: .1, azimuth: .11, elevation: .93, zoom: 14.25 },
   inspect: { x: 0, z: 0, azimuth: .30, elevation: .22, zoom: 2.55 },
 }
@@ -75,7 +76,7 @@ export class Stage {
     this.forestFog = new T.FogExp2('#345755', .0165)
     this.studio = portraitFloor()
     this.scene.add(this.studio)
-    this.camera = new T.OrthographicCamera(-1, 1, 1, -1, .1, 99)
+    this.camera = new T.OrthographicCamera(-1, 1, 1, -1, .1, 240)
     this.renderer = new T.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     const gl = this.renderer.getContext()
     const debug = gl.getExtension('WEBGL_debug_renderer_info')
@@ -138,29 +139,45 @@ export class Stage {
     document.addEventListener('visibilitychange', () => { this.last = performance.now() })
     this.resize = new ResizeObserver(() => this.layout())
     this.resize.observe(host)
-    this.mapLoaded = asset('world').then(data => {
-      this.land = data.scene
-      this.scene.add(this.land)
-      this.land.visible = ['world', 'battle'].includes(this.mode)
-      this.land.traverse(object => {
-        if (!object.isMesh) return
-        object.receiveShadow = true
-        object.castShadow = /^(Weathered slate|Alder bark|Silver birch bark|Oil-rubbed rowan)/.test(object.material.name)
-      })
-    }).catch(error => callbacks.error(error))
-    void Promise.all([this.mapLoaded, asset('canopy')]).then(([, data]) => {
-      this.land?.add(data.scene)
-    }).catch(error => callbacks.error(error))
+    this.landscapes = new Map()
     this.setMode('menu')
     this.attach()
     requestAnimationFrame(now => this.frame(now))
+  }
+
+  loadLandscape(mode) {
+    const model = this.landscapes.get(mode)
+    if (model) {
+      this.mapLoaded = model.ready
+      return
+    }
+    const entry = {}
+    this.landscapes.set(mode, entry)
+    const battle = mode === 'battle'
+    entry.ready = Promise.all(battle ? [asset('world'), asset('canopy')] : [asset('continent')])
+      .then(([terrain, trees]) => {
+        entry.scene = terrain.scene.clone()
+        if (trees) entry.scene.add(trees.scene.clone())
+        entry.scene.name = battle ? 'Battle clearing' : 'Continent'
+        entry.scene.visible = this.mode === mode
+        entry.scene.traverse(object => {
+          if (!object.isMesh || !battle) return
+          object.receiveShadow = true
+          object.castShadow = /^(Weathered slate|Alder bark|Silver birch bark|Oil-rubbed rowan)/.test(object.material.name)
+        })
+        this.scene.add(entry.scene)
+      }).catch(() => {
+        this.landscapes.delete(mode)
+        this.callbacks.error()
+      })
+    this.mapLoaded = entry.ready
   }
 
   setMode(mode) {
     if (mode === this.mode) return
     this.mode = mode
     this.touch?.reset()
-    if ((mode === 'world' || mode === 'battle') && !this.fireWarm) {
+    if (mode === 'battle' && !this.fireWarm) {
       this.fireWarm = true
       const idle = globalThis.requestIdleCallback ?? globalThis.requestAnimationFrame
       idle(() => {
@@ -168,21 +185,22 @@ export class Stage {
       })
     }
     const landscape = mode === 'world' || mode === 'battle'
-    this.scene.fog = landscape ? this.forestFog : null
+    this.scene.fog = mode === 'battle' ? this.forestFog : null
     this.studio.visible = mode === 'choose' || mode === 'inspect'
-    this.motes.visible = landscape
+    this.motes.visible = mode === 'battle'
     this.groundShadows.visible = mode !== 'menu'
-    this.ambient.intensity = landscape ? 2.18 : 1.95
-    this.key.intensity = landscape ? 2.64 : 3.48
-    this.rim.intensity = landscape ? 2.45 : 2.82
+    this.ambient.intensity = mode === 'world' ? 1.42 : landscape ? 2.18 : 1.95
+    this.key.intensity = mode === 'world' ? 2.14 : landscape ? 2.64 : 3.48
+    this.rim.intensity = mode === 'world' ? .76 : landscape ? 2.45 : 2.82
     for (const tick of this.effects) tick(Infinity)
     this.effects = []
     this.host.hidden = mode === 'menu'
     for (const id of this.units.keys()) this.remove(id)
     this.clearMarks()
     this.clearHover()
-    if (this.land) this.land.visible = ['world', 'battle'].includes(mode)
-    this.scene.background.set(['choose', 'inspect'].includes(mode) ? '#162823' : '#193133')
+    for (const [key, map] of this.landscapes) if (map.scene) map.scene.visible = mode === key
+    if (landscape) this.loadLandscape(mode)
+    this.scene.background.set(mode === 'world' ? '#142e38' : landscape ? '#193133' : '#162823')
     this.resetCamera()
     this.layout()
   }
@@ -227,22 +245,34 @@ export class Stage {
 
   zoomCamera(ratio) {
     const portrait = ['choose', 'inspect'].includes(this.mode)
-    this.view.zoom = T.MathUtils.clamp(this.view.zoom * ratio, portrait ? 1.8 : 8.2, portrait ? 5.8 : 26)
+    const world = this.mode === 'world'
+    this.view.zoom = T.MathUtils.clamp(this.view.zoom * ratio, portrait ? 1.8 : world ? 14 : 8.2, portrait ? 5.8 : world ? 112 : 26)
+    this.placeCamera()
+  }
+
+  focusWorld(point) {
+    if (this.mode !== 'world') return
+    this.view = { ...presets.world, x: point.x, z: point.z, zoom: 33 }
+    this.placeCamera()
+  }
+
+  moveCamera(dx, dz) {
+    const world = this.mode === 'world'
+    this.view.x = T.MathUtils.clamp(this.view.x + dx, world ? -51 : -17, world ? 51 : 17)
+    this.view.z = T.MathUtils.clamp(this.view.z + dz, world ? -43 : -13, world ? 43 : 13)
     this.placeCamera()
   }
 
   panCamera(previous, current, anchor = this.worldPoint(previous)) {
     const target = this.worldPoint(current)
     if (!anchor || !target) return
-    this.view.x = T.MathUtils.clamp(this.view.x + anchor.x - target.x, -16, 16)
-    this.view.z = T.MathUtils.clamp(this.view.z + anchor.z - target.z, -12, 12)
-    this.placeCamera()
+    this.moveCamera(anchor.x - target.x, anchor.z - target.z)
   }
 
   placeCamera() {
     const { x, z, azimuth, elevation, zoom } = this.view
     const aspect = this.width / this.height
-    const h = zoom / Math.min(1.8, aspect) * 1.64
+    const h = zoom / Math.min(this.mode === 'world' ? 1.48 : 1.8, aspect) * 1.64
     const portrait = ['choose', 'inspect'].includes(this.mode)
     const staged = this.touchLayout.matches && portrait
     const horizontal = staged && aspect >= 1 ? -h * aspect * .19 : 0
@@ -251,7 +281,7 @@ export class Stage {
     this.camera.right = h * aspect / 2 + horizontal
     this.camera.top = h / 2 + vertical
     this.camera.bottom = -h / 2 + vertical
-    const radius = 33
+    const radius = this.mode === 'world' ? 112 : 33
     this.camera.position.set(x + Math.sin(azimuth) * radius * Math.cos(elevation),
       Math.sin(elevation) * radius, z + Math.cos(azimuth) * radius * Math.cos(elevation))
     this.camera.lookAt(x, portrait ? 1.15 : 0, z)
@@ -283,7 +313,7 @@ export class Stage {
       return existing.loading
     }
     const pivot = new T.Group()
-    pivot.position.set(pos.x, 0, pos.z)
+    pivot.position.set(pos.x, this.mode === 'world' ? pos.y ?? 0 : 0, pos.z)
     pivot.rotation.y = options.angle ?? .35
     pivot.scale.setScalar(options.scale ?? 1)
     pivot.visible = !options.hidden
@@ -299,7 +329,7 @@ export class Stage {
       unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
       unit.shadow.visible = !options.hidden
       unit.shadow.rotation.x = -Math.PI / 2
-      unit.shadow.position.set(pos.x, .014, pos.z)
+      unit.shadow.position.set(pos.x, pivot.position.y + .014, pos.z)
       this.groundShadows.add(unit.shadow)
     }
     this.units.set(id, unit)
@@ -629,14 +659,14 @@ export class Stage {
     if (cost < .001 || reduced) {
       if (finish) {
         this.face(actor, finish)
-        unit.pivot.position.set(finish.x, 0, finish.z)
+        unit.pivot.position.set(finish.x, finish.y ?? 0, finish.z)
       }
       this.play(actor, 'idle', false)
       return Promise.resolve()
     }
     this.play(actor, 'walk', false)
     return new Promise(resolve => {
-      unit.travel = { points, i: 1, speed: this.mode === 'world' ? 13 : 10, resolve }
+      unit.travel = { points, i: 1, speed: this.mode === 'world' ? Math.max(10, cost / 1.55) : 10, resolve }
     })
   }
 
@@ -652,9 +682,10 @@ export class Stage {
       if (step > allowance) {
         from.x += (goal.x - from.x) * allowance / step
         from.z += (goal.z - from.z) * allowance / step
+        from.y += ((goal.y ?? 0) - from.y) * allowance / step
         return
       }
-      from.set(goal.x, 0, goal.z)
+      from.set(goal.x, goal.y ?? 0, goal.z)
       allowance -= step
       move.i++
     }
@@ -745,8 +776,7 @@ export class Stage {
         if (!this.drag.moved && Math.hypot(dx, dy) < 6) return
         this.drag.moved = true
         if (this.drag.center) {
-          this.view.x = T.MathUtils.clamp(this.view.x - dx * .023, -17, 17)
-          this.view.z = T.MathUtils.clamp(this.view.z - dy * .030, -13, 13)
+          this.panCamera({clientX: this.drag.x, clientY: this.drag.y}, event)
         } else {
           this.view.azimuth -= dx * .006
           this.view.elevation = T.MathUtils.clamp(this.view.elevation + dy * .006, .2, 1.40)
@@ -782,8 +812,11 @@ export class Stage {
     this.canvas.addEventListener('wheel', event => {
       if (!['world', 'battle'].includes(this.mode)) return
       event.preventDefault()
-      this.view.zoom = T.MathUtils.clamp(this.view.zoom + event.deltaY * .012, 8.2, 24)
-      this.placeCamera()
+      if (this.mode === 'world') this.zoomCamera(Math.exp(event.deltaY * .001))
+      else {
+        this.view.zoom = T.MathUtils.clamp(this.view.zoom + event.deltaY * .012, 8.2, 24)
+        this.placeCamera()
+      }
     }, { passive: false })
   }
 
@@ -935,6 +968,7 @@ export class Stage {
       if (unit.shadow) {
         unit.shadow.position.x = unit.pivot.position.x
         unit.shadow.position.z = unit.pivot.position.z
+        unit.shadow.position.y = unit.pivot.position.y + .014
       }
       if (unit.current && unit.pivot.visible) {
         this.updateFocus(unit)

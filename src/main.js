@@ -8,6 +8,7 @@ import { enemyCanPlay, enemyTurn } from './game/ai.js'
 import { distance, movementBlocks, movementMask, router, travel } from './game/geometry.js'
 import { latest, newGame, readSettings, readSlot, slots, writeSettings, writeSlot } from './game/save.js'
 import { chooseEvent, requiresBattle } from './game/world.js'
+import { atlasPoint, atlasRoute, continentName, countries, sites } from './game/overworld.js'
 import { movementCheckpoint, reversibleMove, restoreMovement } from './game/undo-move.js'
 import { availableSummons, summonPlan } from './game/summoning.js'
 import { consume, itemProblem, purchase, purchaseProblem } from './game/inventory.js'
@@ -154,8 +155,8 @@ function setScene(next) {
   }
   if (next === 'choose') stage.bind('preview', 'hero', { x: .78, z: 0 }, { angle: -.14 })
   if (next === 'world') {
-    worldPoint = game.world
-    stage.bind('map-hero', 'hero', waypoints[game.world], { scale: .82, angle: 1.27 })
+    worldPoint = sites[game.world] ? game.world : 'camp'
+    stage.bind('map-hero', 'hero', atlasPoint(worldPoint), { scale: .75, angle: 1.27 })
   }
   if (next === 'battle') syncModels()
   if (next === 'inspect') {
@@ -209,6 +210,7 @@ const shopCarrier = () => shopTarget === 'hero' ? game.hero :
 
 function renderWorld() {
   const stop = waypoints[worldPoint]
+  const country = countries.find(region => region.id === sites[worldPoint].country)
   const mandatory = requiresBattle(game, worldPoint)
   const seen = game.eventsSeen[worldPoint]
   const type = stop.revisit && !mandatory ? 'battle' : stop.type
@@ -231,18 +233,20 @@ function renderWorld() {
     })]
   })
   ui.innerHTML = '<section class="overlay world-screen"><header class="topbar">' +
-    (touch ? '<h1 class="world-name">月見森林</h1>' : brand) + '<div class="top-right">' +
+    '<h1 class="world-name">' + continentName + '</h1><div class="top-right">' +
+    button('全圖', 'atlas-all', { css: 'subtle', title: '查看整個大陸' }) +
+    button(country.name, 'atlas-region', { css: 'subtle', title: '拉近到' + country.name }) +
     button('物品', 'world-kit', { css: 'subtle', disabled: busy }) +
     button('精靈手冊', 'collection', { css: 'subtle', disabled: busy }) + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
     button('選單', 'pause', { css: 'subtle' }) + '</div></header>' +
-    (touch ? '' : '<div class="world-title"><div class="eyebrow"><i></i> 大地圖</div><h1>月見森林</h1></div>') +
     '<div class="world-dock' + (touch ? ' touch-dock' : '') + '"><aside class="world-card"><div class="eyebrow">' + waypointTypes[type].label + '</div><h2>' + stop.name + '</h2><p>' + details + '</p>' +
     button(action[0], action[1], { css: 'primary full', disabled: busy || Boolean(seen) || (action[1] === 'enter' && !game.hero.hp) }) + '</aside>' +
     (touch ? '<nav class="waypoints-list" aria-label="地圖地點">' +
       locationButtons.map(([, control]) => control).join('') + '</nav>' : '') + '</div>' +
     '<footer class="map-footer"><span>拖曳右鍵旋轉　／　滾輪縮放</span><span>' + goldLine(game.gold) + '　勝利 ' + game.wins + ' 場</span></footer>' +
     cameraTools() + '</section>'
-  tags.innerHTML = locationButtons.map(([key, control]) =>
+  tags.innerHTML = countries.map(country => '<div class="tag atlas-country" data-country="' + country.id +
+    '">' + country.name + '</div>').join('') + locationButtons.map(([key, control]) =>
     '<div class="tag waypoint" data-node="' + key + '">' + control + '</div>').join('')
 }
 
@@ -542,14 +546,23 @@ function drawGhosts() {
 }
 
 function projectTags(renderer) {
+  const worldMode = scene === 'world'
+  const labels = []
   for (const tag of tags.children) {
     const u = tag.dataset.unit && unitById(game.battle, tag.dataset.unit)
     const body = u && renderer.units.get(u.id)?.pivot
     const pivot = body?.position
-    const node = waypoints[tag.dataset.node]
-    if (!pivot && !node) continue
-    const at = renderer.project(pivot ?? node, node ? .38 : u.kind === 'hero' || u.kind === 'rival' ? 2.65 : u.evolved ? 2.85 : 2.05)
-    const visible = at.show && body?.visible !== false && (!touchLayout.matches ||
+    const node = worldMode && tag.dataset.node ? atlasPoint(tag.dataset.node) : null
+    const country = worldMode && tag.dataset.country ? countries.find(region => region.id === tag.dataset.country) : null
+    const pos = pivot ?? node ?? country
+    if (!pos) continue
+    const height = country ? country.y : node ? node.y + .78 : u.kind === 'hero' || u.kind === 'rival' ? 2.65 : u.evolved ? 2.85 : 2.05
+    const at = renderer.project(pos, height)
+    if (node) {
+      labels.push({ tag, at, id: tag.dataset.node })
+      continue
+    }
+    const visible = at.show && (!country || renderer.view.zoom > 40) && body?.visible !== false && (!touchLayout.matches ||
       (at.y >= touchHudTop + 38 && at.y <= renderer.height - touchHudBottom && at.x >= 43 && at.x <= renderer.width - 43))
     const x = at.x + (renderer.offset?.x ?? 0)
     const y = at.y + (renderer.offset?.y ?? 0)
@@ -559,6 +572,28 @@ function projectTags(renderer) {
     }
     const visibility = visible ? 'visible' : 'hidden'
     if (tag.style.visibility !== visibility) tag.style.visibility = visibility
+  }
+  if (!worldMode) return
+  labels.sort((a, b) => Number(b.id === worldPoint) - Number(a.id === worldPoint))
+  const placed = []
+  const pad = touchLayout.matches ? touchHudBottom + 5 : 24
+  for (const { tag, at, id } of labels) {
+    const width = tag.offsetWidth || 86
+    const height = tag.offsetHeight || 36
+    const left = at.x - width / 2
+    const top = at.y - height
+    const overlaps = placed.some(rect => left < rect.right + 4 && left + width + 4 > rect.left &&
+      top < rect.bottom + 4 && at.y + 4 > rect.top)
+    const fits = left > 6 && left + width < renderer.width - 6 && top > (touchHudTop || 55) &&
+      at.y < renderer.height - pad
+    const visibility = at.show && fits && !overlaps ? 'visible' : 'hidden'
+    if (visibility === 'visible') {
+      const transform = 'translate(' + at.x.toFixed(1) + 'px,' + at.y.toFixed(1) + 'px) translate(-50%,-100%)'
+      if (tag.style.transform !== transform) tag.style.transform = transform
+      placed.push({ left, top, right: left + width, bottom: at.y })
+    }
+    if (tag.style.visibility !== visibility) tag.style.visibility = visibility
+    tag.classList.toggle('current-location', id === worldPoint)
   }
 }
 
@@ -885,15 +920,13 @@ async function walkTo(key) {
     useWaypoint(waypointAction(key))
     return
   }
+  const route = atlasRoute(worldPoint, key)
+  if (!route.length) { notify('目前還沒有通往這裡的路。'); return }
   worldPoint = key
   busy = true
   render()
   const token = ++selectWorldToken
-  const pivot = stage.units.get('map-hero')?.pivot.position
-  const from = pivot ? { x: pivot.x, z: pivot.z } : waypoints[game.world]
-  const end = waypoints[key]
-  const path = router(from, movementBlocks([], null))(end)
-  await stage.move('map-hero', path?.points ?? [from, end], settings.reduced)
+  await stage.move('map-hero', route, settings.reduced)
   if (token !== selectWorldToken || scene !== 'world') return
   busy = false
   game.world = key
@@ -1003,6 +1036,11 @@ app.addEventListener('click', event => {
   if (code === 'camera-out') stage.zoomCamera(1.24)
   if (code === 'camera-in') stage.zoomCamera(1 / 1.24)
   if (code === 'camera-reset') stage.resetCamera()
+  if (code === 'atlas-all') stage.resetCamera()
+  if (code === 'atlas-region') {
+    const region = countries.find(country => country.id === sites[worldPoint].country)
+    stage.focusWorld(region.focus ?? atlasPoint(worldPoint))
+  }
   if (code === 'sound') {
     settings.volume = settings.volume ? 0 : .45
     writeSettings(settings)

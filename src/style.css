@@ -353,3 +353,31 @@ kbd { color: var(--gold-light) }
 @media (max-height: 460px) {
   .summon-dock .inventory-rows { max-height: 28vh; }
 }
+
+/* Continent labels remain small and float over the 3D atlas. */
+.world-name { font: 650 clamp(18px, 2.7vw, 36px)/1.18 var(--serif); text-shadow: 0 2px 9px #071311 }
+.atlas-country {
+  color: #fff0cc;
+  font-family: var(--serif);
+  font-size: clamp(13px, 1.65vw, 22px);
+  font-weight: 650;
+  letter-spacing: .14em;
+  text-shadow: 0 1px 4px #091a16, 0 2px 10px #050c0e, 0 0 14px #180f08;
+}
+#app[data-scene="world"] .tag.waypoint button {
+  min-height: 33px;
+  border: 0;
+  color: #fff3d9;
+  background: #172520a8;
+  box-shadow: none;
+  text-shadow: 0 1px 3px #07100b;
+}
+#app[data-scene="world"].touch-layout .tag.waypoint button { min-height: 44px }
+#app[data-scene="world"] .tag.waypoint.current-location button { color: var(--gold-light); background: #2f3526d8 }
+#app[data-scene="world"] .world-card { border: 0; background: transparent; box-shadow: none; padding: 0; text-shadow: 0 2px 4px #081412 }
+#app[data-scene="world"] .world-screen::after { background: linear-gradient(180deg, #071311b5, transparent 16% 78%, #071311d9) }
+#app[data-scene="world"] .topbar .subtle { background: transparent; border-color: transparent; text-shadow: 0 2px 5px #081412 }
+@media (max-width: 620px) {
+  #app[data-scene="world"] .topbar { flex-wrap: wrap; gap: 0; }
+  #app[data-scene="world"] .top-right { gap: 0; flex-wrap: wrap; }
+}

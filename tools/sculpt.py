@@ -15,6 +15,7 @@ from mathutils.bvhtree import BVHTree
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from idle_behaviors import CLIPS, REAR_LOOK, THREAT_FRAMES, TURN_FRAMES, pose as idle_pose
 from concept_palette import LioPalette, OrthographicPalette
+from continent import build as build_continent
 
 OUT = Path(__file__).resolve().parents[1] / '.art-cache'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -1877,3 +1878,5 @@ if __name__ == '__main__':
         person()
     if not selected or 'world' in selected:
         world()
+    if not selected or 'continent' in selected:
+        build_continent(OUT.parent, reset, material, mesh, pigment, export)
