@@ -14,6 +14,7 @@ from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from idle_behaviors import CLIPS, THREAT_FRAMES, TURN_FRAMES, pose as idle_pose
+from concept_palette import OrthographicPalette
 
 OUT = Path(__file__).resolve().parents[1] / '.art-cache'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -213,7 +214,7 @@ def soft(low, high, value):
     return t*t*(3-2*t)
 
 
-def pigment(obj, base, apply):
+def pigment(obj, base, apply, projection=None):
     tint = base.copy()
     colors = obj.data.color_attributes.new('Surface pigment', 'BYTE_COLOR', 'POINT')
     nodes = tint.node_tree.nodes
@@ -223,6 +224,8 @@ def pigment(obj, base, apply):
     obj.data.materials[0] = tint
     for vert in obj.data.vertices:
         color = apply(vert.co)
+        if projection is not None:
+            color = projection.paint(color,vert.co,vert.normal)
         colors.data[vert.index].color = (*(min(1, max(0, c)) for c in color), 1)
 
 
@@ -350,7 +353,7 @@ def feather(name, root, tip, width, mat, roll=.05):
 
 
 def shell_layers(height, evolved, frame_mat, plastron_mat):
-    width, depth = .66+.21*evolved,.78+.17*evolved
+    width, depth = .73+.19*evolved,.93+.19*evolved
     edge = []
     for i in range(89):
         a = i*TAU/88
@@ -366,7 +369,7 @@ def shell_layers(height, evolved, frame_mat, plastron_mat):
 
 def carve_shell(height, evolved, dark, base, accent):
     sides, rings = 84, 38
-    width, depth = .66+.21*evolved, .78+.17*evolved
+    width, depth = .73+.19*evolved,.93+.19*evolved
     seams = [(.47*math.cos(TAU*i/7), .47*math.sin(TAU*i/7)) for i in range(7)]
     seams.append((0,0))
 
@@ -381,7 +384,7 @@ def carve_shell(height, evolved, dark, base, accent):
             angle = j*TAU/sides
             u,v = r*math.cos(angle), r*math.sin(angle)
             ridge = relief(u,v)
-            z = height+.10+(.61+.13*evolved)*(1-r*r)**.72
+            z = height+.10+(.56+.14*evolved)*(1-r*r)**.62
             z += .028*ridge + .018*math.sin(angle*7)*r
             z -= .105*soft(.88,1.0,r)
             verts.append((u*width, .13+v*depth, z))
@@ -404,7 +407,7 @@ def carve_shell(height, evolved, dark, base, accent):
 
 
 def scute_armor(height, evolved, mat):
-    width, depth = .66+.21*evolved,.78+.17*evolved
+    width, depth = .73+.19*evolved,.93+.19*evolved
     cells = [(0,0)] + [(.47*math.cos(i*TAU/7),.47*math.sin(i*TAU/7)) for i in range(7)]
     coords,polys = [],[]
     sides,rings = 32,7
@@ -424,9 +427,9 @@ def scute_armor(height, evolved, mat):
                         edge = min(edge,((x-u0)**2+(y-v0)**2)/(2*stretch))
                 u,v = u0+dx*r*edge*.927,v0+dy*r*edge*.927
                 radial = math.hypot(u,v)
-                z = height+.10+(.61+.13*evolved)*(1-radial**2)**.72
+                z = height+.10+(.56+.14*evolved)*(1-radial**2)**.62
                 z -= .105*soft(.88,1,radial)
-                z += .053+.049*math.sin(math.pi*r*.84) - .009*math.sin(angle*3)*r
+                z += .047+.054*math.sin(math.pi*r*.81) - .009*math.sin(angle*3)*r
                 coords.append((u*width,v*depth+.13,z))
                 if i:
                     a=offset+(i-1)*sides+j
@@ -717,9 +720,9 @@ def animal(kind, evolved):
     cornea = material('Inset cornea', 'ffffff', .26)
     E = int(evolved)
     height = {'turtle':1.36, 'dino':1.92, 'cat':1.82, 'bird':1.83, 'mouse':1.45, 'dog':1.91}[kind] + .44*E
-    chest = height * {'turtle':.41,'dino':.53,'cat':.53,'bird':.57,'mouse':.39,'dog':.52}[kind]
+    chest = height * {'turtle':.445,'dino':.556,'cat':.565,'bird':.55,'mouse':.365,'dog':.544}[kind]
     front_y = {'turtle':-.44,'dino':-.37,'cat':-.52,'bird':-.37,'mouse':-.40,'dog':-.53}[kind]
-    hind_y = {'turtle':.60,'dino':.39,'cat':.57,'bird':.19,'mouse':.42,'dog':.63}[kind]
+    hind_y = {'turtle':.68,'dino':.32,'cat':.64,'bird':.18,'mouse':.46,'dog':.67}[kind]
     span = {'turtle':.40,'dino':.31,'cat':.26,'bird':.16,'mouse':.23,'dog':.26}[kind]
     parts = []
     pinned = []
@@ -730,22 +733,23 @@ def animal(kind, evolved):
     def trim(name, sections, mat, bone, sides=12):
         return fix(loft(name, sections, mat, sides, .032, steps=3), bone)
 
-    bodylength = {'turtle':.91, 'dino':.75, 'cat':.85, 'bird':.58, 'mouse':.61, 'dog':.83}[kind]
-    width = {'turtle':.55, 'dino':.37, 'cat':.318, 'bird':.354, 'mouse':.425, 'dog':.373}[kind]+.10*E
+    bodylength = {'turtle':1.03, 'dino':.74, 'cat':.89, 'bird':.61, 'mouse':.62, 'dog':.88}[kind]
+    width = {'turtle':.61, 'dino':.316, 'cat':.296, 'bird':.342, 'mouse':.435, 'dog':.345}[kind]+.087*E
     headz = height * {'turtle':.465,'dino':.82,'cat':.818,'bird':.835,'mouse':.53,'dog':.812}[kind]
-    heady = {'turtle':-.89,'dino':-.72,'cat':-.77,'bird':-.38,'mouse':-.49,'dog':-.73}[kind]
-    headw = {'turtle':.24,'dino':.31,'cat':.295,'bird':.285,'mouse':.315,'dog':.285}[kind]+.061*E
-    skull_depth = {'turtle':1.13,'dino':1.26,'cat':1.05,'bird':1.08,'mouse':1.08,'dog':1.13}[kind]
-    skull_height = {'turtle':.77,'dino':.78,'cat':.92,'bird':.97,'mouse':.95,'dog':.86}[kind]
-    barrel = .78 if kind=='dino' else .94 if kind in ('dog','cat') else 1
+    heady = {'turtle':-.96,'dino':-.78,'cat':-.805,'bird':-.42,'mouse':-.50,'dog':-.775}[kind]
+    headw = {'turtle':.24,'dino':.275,'cat':.284,'bird':.285,'mouse':.315,'dog':.285}[kind]+.061*E
+    skull_depth = {'turtle':1.13,'dino':1.42,'cat':1.05,'bird':1.08,'mouse':1.08,'dog':1.13}[kind]
+    skull_height = {'turtle':.77,'dino':.71,'cat':.90,'bird':.97,'mouse':.95,'dog':.86}[kind]
+    barrel = .71 if kind=='dino' else .87 if kind in ('dog','cat') else 1
+    hip_height = .91 if kind=='dino' else .96 if kind=='dog' else 1.04
     parts.extend([loft('Chest, barrel and haunch line', [((0,-bodylength*.77,chest*.98),width*.55,chest*.33),
                     ((0,-bodylength*.35,chest*.99),width*.97,chest*.56*barrel),
                     ((0,bodylength*.22,chest*.97),width*.86,chest*.49*barrel),
-                    ((0,bodylength*.67,chest*1.04),width*.89,chest*.50),
-                    ((0,bodylength*1.02,chest*1.02),width*.25,chest*.19)],skinmat,24,.012,steps=5),
+                    ((0,bodylength*.67,chest*hip_height),width*.89,chest*.46),
+                    ((0,bodylength*1.02,chest*.96),width*.25,chest*.19)],skinmat,28,.012,steps=5),
                   ell('Cranial anatomy', (0,heady,headz), (headw,headw*skull_depth,headw*skull_height)),
                   ell('Neck', (0,heady*.68,(chest+headz)*.53), (width*.68, width*.82, abs(headz-chest)*.53+.17))])
-    muzzle_depth = {'turtle':.105,'dino':.342,'cat':.122,'mouse':.124,'dog':.266,'bird':.18}[kind]
+    muzzle_depth = {'turtle':.105,'dino':.37,'cat':.122,'mouse':.124,'dog':.284,'bird':.18}[kind]
     muzzle_y = heady-headw*.82
     muzzle_z = headz-headw*(.22 if kind in ('dino','dog') else .27)
     if kind != 'bird':
@@ -791,9 +795,10 @@ def animal(kind, evolved):
                 continue
             leg = {'turtle':.166,'dino':.154,'cat':.119,'bird':.067,'mouse':.110,'dog':.120}[kind]
             haunch = 1.34 if key=='Back' and kind in ('cat','dog','dino','mouse') else 1
-            knee = -.121 if key=='Back' and kind in ('cat','dog','dino') else .084
+            knee = -.188 if key=='Back' and kind in ('cat','dog','dino') else .084
+            heel = .176 if key=='Back' and kind in ('cat','dog','dino') else .024
             parts.append(loft('Tapered limb and paw', [((s*.61,y-.005,chest*1.10),leg*1.27*haunch,leg*1.22*haunch),
-                ((s*.98,y+knee,chest*.63),leg*.91,leg*.93),((s*1.07,y+.024,.20),leg*.60,leg*.60),
+                ((s*.98,y+knee,chest*.63),leg*.91,leg*.93),((s*1.07,y+heel,.241),leg*.60,leg*.60),
                 ((s*1.10,y-.118,.095),leg*.93,leg*1.22),((s*1.09,y-.114,.031),leg*.76,leg*.96)],
                 skinmat,16,.034,steps=4))
             if kind in ('bird','turtle','dino','dog'):
@@ -807,12 +812,12 @@ def animal(kind, evolved):
                         ((toe_x+toe*.008,toe_y-.078,.063),leg*.16,.020),
                         ((toe_x+toe*.014,toe_y-.116,.032),.005,.006)],claw,
                          ('Paw' if kind=='dog' else '')+key+suffix,8)
-        width, aperture, rise, *_ = EYE_STYLES[kind]
+        eye_width, aperture, rise, *_ = EYE_STYLES[kind]
         offset = .58 if kind in ('bird','turtle') else .54
-        frames.append((side*headw*offset,headz+headw*.16,headw*width,
+        frames.append((side*headw*offset,headz+headw*.16,headw*eye_width,
                        headw*aperture,side*rise))
         if kind in ('cat','dog','mouse'):
-            ear = .29 if kind == 'cat' else .43 if kind == 'dog' else .23
+            ear = .29 if kind == 'cat' else .37 if kind == 'dog' else .23
             if kind == 'mouse':
                 ear += .10*E
                 rim = material('Warm pink ear concha '+suffix, 'c58d74',.61)
@@ -867,15 +872,16 @@ def animal(kind, evolved):
                     ((x*1.13,.31,chest+1.07-abs(x)*.6),.012,.011)],lightmat,'Body',8)
     if kind == 'dino':
         sail = material('Horn ember spines', 'be6234' if not E else 'd35c39', .52)
-        for j in range(5+3*E):
-            y = -.64 + j*(.184 if E else .27)
-            z = headz+.155 if j<2 else chest*(1.34 if j<4 else 1.18)
-            fin = (1+.41*math.sin(j*.74))*(.188+.145*E)
-            spine = loft('Overlapping dorsal spine', [((0,y,z+.011),.091,.131),
-                ((.011,y+.072,z+fin*.45),.065,.084),((.018,y+.141,z+fin*.79),.035,.048),
-                ((.021,y+.236,z+fin),.008,.013)],sail,18,.026,steps=4)
-            pigment(spine,sail,lambda v: blend((.25,.086,.036),(.89,.54,.18),soft(z+.02,z+fin*.87,v.z)))
-            fix(spine,'Head' if j<2 else 'Body')
+        crest = [(-.77,headz+.145),(-.58,headz+.142),(-.41,headz+.084),(-.24,chest*1.32),
+                 (-.07,chest*1.33),(.10,chest*1.34),(.30,chest*1.32),(.51,chest*1.28),
+                 (.71,chest*1.20),(.91,chest*1.04),(1.10,chest*.979)]
+        for j,(y,z) in enumerate(crest):
+            fin = (.192-.0095*j)*(1+.34*E)
+            spine = loft('Swept drake spine', [((0,y,z-.025),.054,.105),
+                ((.006,y+.053,z+fin*.50),.042,.061),((.012,y+.112,z+fin*.81),.021,.035),
+                ((.017,y+.204,z+fin),.004,.008)],sail,14,.018,steps=4)
+            pigment(spine,sail,lambda v: blend((.19,.050,.025),(.64,.31,.083),soft(z+.02,z+fin*.88,v.z)))
+            fix(spine,'Head' if j<3 else 'Tail' if j>8 else 'Body')
         if E:
             for side in (-1,1):
                 trim('Horn', [((side*.25,heady+.12,headz+.22),.11,.10),((side*.39,heady+.22,headz+.44),.063,.061),
@@ -912,7 +918,7 @@ def animal(kind, evolved):
             trim('Head plume', [((side*.13,heady+.13,headz+.17),.076,.075),((side*.13,heady+.28,headz+.40+E*.13),.068,.047),
                  ((side*.17,heady+.51+E*.19,headz+.48+E*.26),.008,.008)],darkmat,'Head',9)
     tailwidth = {'turtle':.106,'dino':.248,'cat':.135,'bird':.122,'mouse':.062,'dog':.259}[kind] + .044*E
-    tailend = {'turtle':1.11,'dino':1.94,'cat':1.59,'bird':1.42,'mouse':1.60,'dog':1.49}[kind]+.232*E
+    tailend = {'turtle':1.23,'dino':2.23,'cat':1.72,'bird':1.51,'mouse':1.59,'dog':1.53}[kind]+.232*E
     tall = kind in ('cat','dog','mouse')
     tail_path = [((0,bodylength*.67,chest*.93),tailwidth*1.08,tailwidth),
          ((.08,bodylength*.76+tailend*.16,chest*.95),tailwidth*.94,tailwidth*.80),
@@ -923,14 +929,19 @@ def animal(kind, evolved):
                ((.116,tailend*.81,chest+.66),tailwidth*1.10,tailwidth*.90),((.125,tailend*.68,chest+.98+.19*E),tailwidth*.68,tailwidth*.49),
                ((.098,tailend*.47,chest+1.01+.19*E),.037,.028)],
         'cat':[((0,.59,chest*1.03),tailwidth,tailwidth),((.07,.94,chest*.84),tailwidth*.94,tailwidth*.82),
-               ((.10,tailend*.80,chest*.62),tailwidth*.77,tailwidth*.69),
-               ((.16,tailend*.91,chest*.69),tailwidth*.59,tailwidth*.53),((.24,tailend,chest*.91),.026,.035)],
+               ((.10,tailend*.80,chest*.54),tailwidth*.80,tailwidth*.74),
+               ((.16,tailend*.91,chest*.57),tailwidth*.69,tailwidth*.63),((.24,tailend,chest*.77),.024,.035)],
         'mouse':[((0,.46,chest*.63),tailwidth,tailwidth),((.06,tailend*.63,chest*.34),tailwidth*.94,tailwidth*.92),
                  ((.20,tailend*.87,chest*.55),tailwidth*.82,tailwidth*.77),((.24,tailend*.92,chest+ .44+.13*E),.047,.040),
                  ((.14,tailend*.75,chest+.58+.16*E),.032,.031),((.066,tailend*.65,chest+.35+.14*E),.009,.012)],
     }.items():
         if kind==pattern:
             tail_path=path
+    if kind=='dino':
+        tail_path=[((0,.41,chest*.997),tailwidth*1.17,tailwidth*.97),
+              ((.047,.91,chest*.91),tailwidth*.88,tailwidth*.74),
+              ((.099,1.54,chest*.72),tailwidth*.53,tailwidth*.50),
+              ((.154,tailend,chest*.59),.014,.014)]
     parts.append(loft('Continuous tapered tail',tail_path,skinmat,22,.034,steps=7))
     if E and kind in ('dog','mouse'):
         for j in range(6):
@@ -962,10 +973,7 @@ def animal(kind, evolved):
         belly = (1-soft(chest*.61,chest*1.09,v.z))*soft(.16,.63,-v.y)
         muzzle = soft(-heady+headw*.32,-heady+headw*.83,-v.y)*(1-soft(headz-headw*.18,headz+headw*.05,v.z))
         fringe = max(belly*.73,muzzle*.76)
-        if kind == 'cat':
-            stripe = (.5+.5*math.sin(v.y*18+abs(v.x)*11+v.z*8+2*dapple))**2
-            back += soft(.46,.62,stripe)*soft(.06,.27,abs(v.x))*soft(chest*.45,chest*.92,v.z)*.99
-        elif kind in ('mouse','dino'):
+        if kind in ('mouse','dino'):
             back += soft(.18,.55,dapple)*.22
         style = blend(base, shade, back*.62)
         style = blend(style, accent, fringe)
@@ -979,17 +987,26 @@ def animal(kind, evolved):
             pale = max(blaze*.86*front, muzzle*.96, belly*.66, (1-soft(.24,.43,v.z))*.99)
             pale = max(pale, soft(chest+.39,chest+.77,v.z)*soft(.81,1.15,v.y))
             cheek = soft(headw*.32,headw*.78,abs(v.x))*(1-soft(headz-.018,headz+.089,v.z))*front
-            style = blend(style,accent,max(pale,cheek*.93))
+            chest_fur = soft(.27,.51,-v.y)*(1-soft(headz-.31,headz-.15,v.z))
+            style = blend(style,accent,max(pale,cheek*.93,chest_fur*.76))
         if kind=='cat':
-            band = (.5+.5*math.sin(v.y*16.4+(v.z-chest)*7.1+abs(v.x)*7.8+dapple*2.2))
-            contour = soft(.46,.79,band)*soft(chest*.52,chest*.91,v.z)*soft(.09,.28,abs(v.x))
-            style = blend(style,(.065,.085,.051),contour*.61)
+            phase = v.y*14.9 + (v.z-chest)*5.9 + abs(v.x)*4.0 + dapple*1.28
+            band = soft(.17,.68,math.sin(phase))
+            contour = band * soft(.18,.59,v.z) * soft(.065,.21,abs(v.x))
+            face = soft(.77,.96,-v.y)*soft(headz+.015,headz+.116,v.z)
+            contour = max(contour,face*soft(.24,.80,math.sin(abs(v.x)*43+.70)))
+            style = blend(style,(.036,.051,.025),contour*.93)
+            moss = soft(.12,.59,math.sin(phase-.98))*(1-band)*soft(chest*.80,chest*1.06,v.z)
+            style = blend(style,(.31,.34,.073),moss*.57)
             style = blend(style,accent,max(muzzle,belly*.91,1-soft(.17,.31,v.z))*.70)
+            style = blend(style,(.058,.047,.043),soft(1.22,1.60,v.y)*.92)
         if kind=='mouse':
-            face_mask = soft(headz+.012,headz+headw*.17,v.z)*(1-soft(headw*.076,headw*.51,abs(v.x)+.44*(v.z-headz)))
+            fork = abs(abs(v.x)-max(0,(v.z-headz-.048)*.76))
+            face_mask = soft(headz+.035,headz+.09,v.z)*(1-soft(.025,.061,fork))
             stripe = (.5+.5*math.sin(v.y*29.+v.z*5.1))**1.7
             banding = soft(.52,.88,v.y)*stripe
-            style = blend(style,(.098,.109,.159),max(face_mask*front*.84, back*.45,banding*.88))
+            brow = soft(-heady+headw*.19,-heady+headw*.51,-v.y)
+            style = blend(style,(.051,.069,.123),max(face_mask*brow*.92, back*.45,banding*.88))
             style = blend(style,accent,max(muzzle,belly,(1-soft(.12,.22,v.z))*(1-soft(.63,.98,v.y)))*.78)
         if kind in ('bird','turtle'):
             bib = (1-soft(headz-.20,headz+.035,v.z))*soft(.12,.56,-v.y)
@@ -1019,7 +1036,7 @@ def animal(kind, evolved):
         style = blend(style,shade,front*seam*.86)
         return [value*grain(v, 38, .062)*(1+scale*dapple*.035) for value in style]
 
-    pigment(body, skinmat, coat)
+    pigment(body, skinmat, coat, OrthographicPalette(kind,evolved))
     surface = face_surface(body)
     for frame in frames:
         fix(inset_eye(surface,frame,cornea,coat,kind),'Head')
@@ -1048,7 +1065,8 @@ def animal(kind, evolved):
     def body_weights(v):
         bone = 'Body'
         strength = 0
-        if v.y > bodylength*.68 and (v.z > chest*.74 or kind=='mouse' and v.y>bodylength*.85):
+        if v.y > bodylength*.68 and (v.z > chest*.74 or
+                kind in ('mouse','dino','cat') and v.y>bodylength*1.02):
             bone = 'Tail'
             strength = soft(bodylength*.70,min(tailend*.79,1.23),v.y)
             if kind in ('dog','cat'):
@@ -1080,7 +1098,7 @@ def animal(kind, evolved):
     if kind in ('dog','cat','bird'):
         rng = random.Random(1709+len(kind)*71+E)
         samples = []
-        for i in range(4 if kind=='dog' else 3):
+        for i in range(5 if kind=='dog' else 4):
             y = (front_y if kind!='bird' else -.25) + i*.125
             for j in range(9 if kind!='bird' else 7):
                 a=(j-(3 if kind=='bird' else 4))*.34+i*.065
@@ -1090,8 +1108,8 @@ def animal(kind, evolved):
                     central=(math.sin(a)*.11,-.56+i*.033,chest+.25-i*.125)
                     n=(math.sin(a)*.38,-.88,.08)
                 flow=(math.sin(a)*.48,.84 if kind!='bird' else .12,-.83+math.cos(a)*.58)
-                width=.069 if kind in ('cat','bird') else .099
-                length={'dog':.30,'cat':.235,'bird':.167}[kind]
+                width={'cat':.050,'bird':.054,'dog':.085}[kind]
+                length={'dog':.28,'cat':.219,'bird':.147}[kind]
                 color = lightmat.diffuse_color[:3] if kind=='bird' else coat(Vector((n[0]*.32,y,chest+n[2]*.30)))
                 samples.append((central,n,flow,length*rng.uniform(.77,1.22),width*rng.uniform(.71,1.21),color))
         if kind=='dog':
@@ -1101,7 +1119,7 @@ def animal(kind, evolved):
                     central=(u*.29,front_y,chest+.37-i*.13)
                     drift=(u*.26,.01,-.91)
                     light=blend(lightmat.diffuse_color[:3],skinmat.diffuse_color[:3],abs(u)*.34)
-                    samples.append((central,(u*.69,-.92,.21),drift,.28+i*.021,.092,light))
+                    samples.append((central,(u*.69,-.92,.21),drift,.29+i*.016,.072,light))
         cheeks = []
         if kind!='bird':
             for side in (-1,1):
@@ -1127,16 +1145,18 @@ def animal(kind, evolved):
 
 def person():
     reset()
-    cloth = material('Midnight wool', '527e72')
-    cloak = material('Russet velvet', '8b342d')
-    gold = material('Antique brass', 'e5ac66', .47, .28)
-    skinmat = material('Porcelain complexion', 'e6b38f')
-    hair = material('Chestnut hair', '3f2525')
-    boot = material('Oiled leather', '3c302a')
+    cloth = material('Midnight wool', '404c49')
+    trousers = material('Midnight wool slate trousers', '4c423d', .87)
+    cloak = material('Russet velvet', '69332d')
+    gold = material('Antique brass', 'a77d4b', .50, .31)
+    skinmat = material('Wheat complexion', 'daae8a')
+    hair = material('Chestnut hair', '54362a', .53)
+    boot = material('Oiled leather', '4a362e')
+    belt = material('Oiled leather russet belt', '78523a')
     gem = material('Ember glass', 'ffad59', .2, emission=1.35)
     cornea = material('Inset cornea', 'ffffff', .24)
-    stitch = material('Woven bronze thread', 'ab8056')
-    lining = material('Russet velvet lining','432923',.81)
+    stitch = material('Woven bronze thread', '8e7551')
+    lining = material('Russet velvet lining','766051',.81)
     fasteners = material('Struck brass detail','d59c58',.44,.4)
     pinned = []
     def fix(obj, bone='Body'):
@@ -1146,38 +1166,75 @@ def person():
         return fix(ovoid(name,at,size,mat,twist,.028),bone)
     def tube(name, sections, mat, bone='Body', sides=16):
         return fix(loft(name,sections,mat,sides,.036,steps=3),bone)
-    tube('Woven field coat', [((0,.043,.98),.356,.246),((0,.040,1.08),.349,.241),
-         ((0,.028,1.28),.286,.206),((0,.010,1.47),.271,.174),((0,.004,1.68),.331,.210),
-         ((0,.037,1.803),.365,.207),((0,.044,1.916),.28,.159),((0,.042,1.983),.195,.132)],
+    tube('Woven field coat', [((0,.051,1.32),.265,.171),((0,.044,1.41),.253,.175),
+         ((0,.028,1.52),.242,.174),((0,.004,1.68),.286,.212),
+         ((0,.028,1.815),.312,.201),((0,.042,1.924),.244,.148),((0,.043,2.011),.136,.114)],
          cloth,sides=42)
-    tube('Turned wool neck binding', [((0,.042,1.901),.203,.150),
-         ((0,.044,1.965),.190,.141),((0,.046,2.010),.183,.128)],cloak,sides=36)
-    tube('Antique gold collar edge', [((0,.044,1.967),.193,.144),
-         ((0,.045,1.997),.185,.133),((0,.046,2.010),.181,.128)],gold,sides=36)
-    tube('Waist belt', [((0,.02,1.365),.282,.20),((0,.02,1.43),.28,.194)],boot,sides=28)
-    ell('Cloak clasp', (0,-.213,1.74),(.087,.028,.084),gold)
-    ell('Cloak clasp inset', (0,-.247,1.74),(.036,.013,.040),gem)
-    ell('Buckle', (.027,-.18,1.395),(.074,.026,.048),gold)
-    ell('Pouch', (-.277,-.049,1.20),(.12,.11,.16),boot,twist=.18)
+    tube('Standing pine-wool collar', [((0,.041,1.927),.155,.123),
+         ((0,.046,1.998),.144,.118),((0,.046,2.061),.132,.103)],cloth,sides=36)
+    tube('Cloth-bound collar edge', [((0,.045,2.035),.137,.106),
+         ((0,.046,2.059),.133,.103)],stitch,sides=30)
+    tube('Waist belt', [((0,.026,1.353),.277,.209),((0,.025,1.415),.268,.209)],belt,sides=34)
+    ell('Cloak clasp', (.013,-.213,1.81),(.047,.018,.047),gold)
+    ell('Cloak clasp inset', (.013,-.229,1.81),(.022,.010,.024),gem)
+    buckle=[(.015,-.19,1.366),(.091,-.178,1.363),(.102,-.174,1.409),(.027,-.189,1.419),(.015,-.19,1.366)]
+    tube('Cast brass buckle frame',[(p,.0075,.0075) for p in buckle],gold,sides=9)
+    flask = loft('Flat traveler pouch', [((-.286,-.057,1.394),.107,.047),((-.292,-.073,1.328),.114,.068),
+        ((-.329,-.062,1.190),.106,.071),((-.322,-.056,1.150),.089,.056)],belt,20,.036,steps=4)
+    fix(flask)
+    tube('Folded pouch flap',[((-.288,-.120,1.394),.091,.014),((-.303,-.127,1.334),.091,.014),
+         ((-.310,-.147,1.293),.042,.012)],boot,sides=18)
+    ell('Pouch button',(-.311,-.161,1.314),(.012,.007,.012),gold)
+    for side in (-1,1):
+        verts,faces=[],[]
+        rows,columns=25,29
+        for i in range(rows):
+            t=i/(rows-1)
+            for j in range(columns):
+                s=j/(columns-1)
+                a=side*(.095+s*3.00+(1-s)**6*.43*t)
+                edge=.97+.16*math.cos(a*1.40)+.042*math.sin(a*2.8+side)
+                z=1.395+(edge-1.395)*t
+                rx=.254+.103*t
+                ry=.189+.053*t
+                x=rx*math.sin(a)
+                y=.041-ry*math.cos(a)-.029*t*math.cos(a*3.5)
+                verts.append((x,y,z))
+                if i and j:
+                    q=i*columns+j
+                    polygon=(q,q-1,q-columns-1,q-columns)
+                    faces.append(polygon if side==-1 else polygon[::-1])
+        panel=mesh('Curved overlapping travel tunic panel',verts,faces,[cloth])
+        activate(panel)
+        seam=panel.modifiers.new('Woven tunic thickness','SOLIDIFY')
+        seam.thickness=.015
+        bpy.ops.object.modifier_apply(modifier=seam.name)
+        uv_project(panel,.76)
+        fix(panel)
+        outline=[verts[i*columns] for i in range(0,rows,2)]
+        outline.extend(verts[(rows-1)*columns+j] for j in range(2,columns,2))
+        tube('Herringbone bound tunic hem',[(p,.007,.006) for p in outline],stitch,sides=7)
     cape_v, cape_f = [], []
-    row_count, width_count = 25, 23
+    row_count, width_count = 35, 33
     for i in range(row_count):
         v=i/(row_count-1)
         for j in range(width_count):
             u=(j/(width_count-1)-.5)*2
-            width=.286+.20*v+.094*math.sin(v*math.pi)
-            x=u*width+.066*v*v
-            y=.153+.285*v+(.025+.065*v)*math.sin(u*13+v*2)-.087*u*u
-            z=1.902-1.40*v-.14*math.cos(u*math.pi*.72)*v-.085*u*u+.047*math.sin(u*15)*v**5
+            width=.293+.276*v+.074*math.sin(v*math.pi)
+            x=u*width+.017*v*v
+            y=.205+.239*v+(.023+.113*v)*math.sin(u*11+v*3.2)-.36*u*u*v
+            z=1.927-1.407*v-.11*math.cos(u*math.pi*.86)*v-.040*u*u+.039*math.sin(u*16)*v**5
             cape_v.append((x,y,z))
     for i in range(row_count-1):
         for j in range(width_count-1):
             k=i*width_count+j
             cape_f.append((k,k+1,k+width_count+1,k+width_count))
-    cape = mesh('Woven trailing cloak with weighted folds',cape_v,cape_f,[cloak])
+    cape = mesh('Floor-facing folded oxblood cloak',cape_v,cape_f,[cloak,lining])
     activate(cape)
     thickness = cape.modifiers.new('Double-sided stitched fabric','SOLIDIFY')
     thickness.thickness = .020
+    thickness.material_offset=1
+    thickness.material_offset_rim=1
     bpy.ops.object.modifier_apply(modifier=thickness.name)
     uv_project(cape,1.10)
     hem=[]
@@ -1203,11 +1260,14 @@ def person():
         hand_parts.append(loft('Thumb', [((s*.521,-.173,1.246),.035,.024),
              ((s*.499,-.198,1.198),.022,.018),((s*.513,-.208,1.170),.012,.016)],skinmat,10,steps=3))
         fix(fuse(hand_parts, 'Hand with sculpted digits', skinmat, .009),arm)
-        tube('Trousers', [((s*.150,.026,1.132),.164,.155),((s*.173,.052,.899),.146,.128),((s*.194,-.010,.685),.108,.106),
-              ((s*.193,.021,.51),.096,.088),((s*.206,.01,.29),.084,.078)],cloth,leg)
+        tube('Trousers', [((s*.139,.028,1.212),.149,.147),((s*.164,.055,.929),.137,.119),
+              ((s*.179,-.012,.716),.108,.102),((s*.187,.019,.56),.105,.104),
+              ((s*.187,.021,.43),.091,.095),((s*.203,.01,.29),.080,.074)],trousers,leg)
         tube('Soft riding boot', [((s*.19,.025,.52),.113,.11),((s*.21,-.005,.30),.105,.095),
               ((s*.216,-.06,.16),.112,.102),((s*.22,-.19,.10),.118,.083),((s*.22,-.27,.083),.091,.047)],boot,leg)
-        ell('Boot stud', (s*.21,-.079,.44),(.042,.022,.025),gold,leg)
+        tube('Boot top strap', [((s*.19,.019,.505),.117,.121),((s*.19,.017,.465),.115,.118)],belt,leg,25)
+        tube('Instep leather strap', [((s*.213,-.061,.191),.117,.119),((s*.213,-.079,.167),.119,.116)],belt,leg,25)
+        ell('Trail boot fastener', (s*.223,-.093,.491),(.025,.009,.016),gold,leg)
         for dent in range(3):
             dz=.109+dent*.074
             tube('Boot lace', [((s*.14,-.109,dz),.005,.005),((s*.205,-.136,dz+.022),.007,.006),
@@ -1248,15 +1308,21 @@ def person():
     for side in (-1,1):
         tube('Temple lock', [((side*.132,.011,2.422),.045,.047),((side*.150,-.013,2.280),.046,.036),
              ((side*.135,.050,2.134),.031,.030),((side*.102,.092,2.104),.005,.009)],hair,'Head',13)
-    for j in range(11):
-        z=2.383-j*.049
-        mid=(.088+min(.19,j*.019),.104+j*.013,z)
-        a=j*math.pi*.76
-        for side in (-1,1):
-            r=.043 if j<7 else .030
-            tube('Interlaced braid', [((mid[0]-r*side,mid[1],z+.042),r*.81,r*.72),
-                ((mid[0]+math.cos(a)*r*side,mid[1]+r*.54,z+.012),r*.84,r*.75),
-                ((mid[0]+r*side,mid[1]+.010,z-.019),r*.52,r*.63)],hair,'Head',9)
+    for strand in range(3):
+        sections=[]
+        for i in range(55):
+            t=i/54
+            angle=t*math.tau*3.4+strand*math.tau/3
+            spread=.038*(1-.62*t*t)
+            x=.127+.240*math.sin(t*2.07)+math.sin(angle)*spread
+            y=.117-.300*soft(.01,.64,t)+math.cos(angle)*spread*.84
+            z=2.402-.802*t
+            r=.038*(1-.71*t**1.9)
+            sections.append(((x,y,z),r,r*.84))
+        tube('Interlaced braid',sections,hair,'Head',12)
+    tie = loft('Braided leather hair tie',[((.345,-.185,1.734),.038,.032),
+         ((.348,-.183,1.701),.034,.032)],belt,18,.015)
+    fix(tie,'Head')
     for side in (-1,1):
         lapel=[((side*.142,-.112,1.955),.029,.013),((side*.199,-.168,1.845),.032,.019),
             ((side*.151,-.236,1.709),.030,.020),((side*.083,-.175,1.489),.018,.011)]
@@ -1267,14 +1333,23 @@ def person():
             y=-.222+.035*phase
             z=1.80-.212*phase
             tube('Hand-finished coat stitch',[((x-.013,y,z+.010),.003,.005),((x+.014,y-.005,z-.019),.003,.005)],gold,'Body',6)
-    tube('Carved rowan wand', [((.57,-.09,1.08),.037,.033),((.57,-.17,1.22),.039,.037),
-         ((.58,-.40,1.37),.034,.030),((.62,-.56,1.53),.020,.021)],boot,'FrontR',10)
-    ell('Ember wand tip', (.62,-.56,1.53),(.054,.05,.065),gem,'FrontR')
+    tube('Carved rowan wand', [((.555,-.156,1.263),.024,.022),((.574,-.161,1.145),.026,.024),
+         ((.620,-.182,.972),.020,.018),((.641,-.216,.856),.013,.015)],belt,'FrontR',12)
+    ell('Ember wand tip', (.647,-.229,.810),(.028,.033,.051),gem,'FrontR')
     coat_parts = [obj for obj, _ in pinned if obj.name.startswith(('Woven field coat','Sleeve'))]
     hair_parts = [obj for obj, _ in pinned if obj.name.startswith(('Scalp hair','Swept sculpted','Temple lock','Interlaced braid'))]
     pinned = [(obj,bone) for obj,bone in pinned if obj not in coat_parts + hair_parts]
     coat = fuse(coat_parts, 'Tailored coat with joined shoulder topology', cloth,.021)
     hair_mesh = fuse(hair_parts, 'Welded sculpt of swept hair and braid', hair,.012)
+    for obj,bone in [*pinned,(hair_mesh,'Head')]:
+        if bone!='Head':
+            continue
+        sections = [key.data for key in obj.data.shape_keys.key_blocks] if obj.data.shape_keys else [obj.data.vertices]
+        for section in sections:
+            for vert in section:
+                x,y,z = vert.co
+                vert.co=(x*.92,y*.90,2.154+(z-2.154)*.89+.024)
+        obj.data.update()
     uv_project(coat,.88)
     def tailored_dye(v):
         band = 1 - .23*exp(-((v.z-1.413)/.045)**2)
@@ -1290,12 +1365,12 @@ def person():
             for j in range(columns):
                 s = j/(columns-1)
                 a = side*(.16 + s*1.42 + t*.05)
-                z = 1.968 - t*(.376+.172*s) + .018*math.sin(s*math.tau*1.33)*t
+                z = 1.964 - t*(.177+.153*s) + .023*math.sin(s*math.tau*1.31)*t
                 normal = Vector((math.sin(a),-math.cos(a),0))
                 pos,_,_,_ = coat_surface.ray_cast(normal*2+Vector((0,.033,z)),-normal)
                 if pos is None:
                     pos = normal*.187+Vector((0,.033,z))
-                fold = .022+.027*math.sin(s*12+t*2.6)**2+.024*t**3
+                fold = .023+.018*math.sin(s*9+t*2.62)**2+.013*t**3
                 drape.append(pos+normal*fold+Vector((0,0,.007)))
                 if i and j:
                     k = i*columns+j
@@ -1317,10 +1392,10 @@ def person():
             ell('Inset brass mantle stud', (p.x,p.y-.012,p.z),(.015,.009,.014),fasteners)
     surface_texture(cape,cloak,49,.21)
     for obj,bone in pinned:
-        if obj.data.materials[0] in (cloth,cloak,boot):
+        if not obj.data.uv_layers and obj.data.materials[0] in (cloth,cloak,boot,belt,trousers):
             uv_project(obj,.74)
     pigment(hair_mesh,hair,lambda v: [
-        c*grain(v,83,.24)*(1+.16*math.sin(v.x*185 + v.z*39 + v.y*25))
+        c*grain(v,83,.18)*(1+.22*math.sin(v.x*185 + v.z*39 + v.y*25))
         for c in hair.diffuse_color[:3]
     ])
     rig = skeleton('Lio',2.46,.02,.0,.19,person=True)

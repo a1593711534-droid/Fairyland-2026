@@ -48,3 +48,24 @@ test('a hit overrides a closer threat and tracks its actual attacker without sca
   attacker.dead = true
   assert.equal(vigilance.update(target, fight, 18).id, closer.id)
 })
+
+test('summoned allies ignore the summoner and use guard and retaliation toward hostile attackers', () => {
+  const summon = unit('starter-dog', 'ally', -9, -3)
+  const summoner = unit('hero', 'ally', -8.5, -3)
+  const foe = unit('rival', 'enemy', -7, -3)
+  const shooter = unit('wild', 'wild', -5, -3)
+  const fight = new Map([summon, summoner, foe, shooter].map(item => [item.id, item]))
+  const focus = new Vigilance('dog', () => .25)
+  summon.pivot.visible = false
+  assert.equal(focus.update(summon, fight, 0), null)
+  summon.pivot.visible = true
+  assert.equal(focus.update(summon, fight, .16).id, foe.id)
+  focus.attacked(summon, summoner, .24)
+  assert.equal(focus.update(summon, fight, .3).mode, 'guard')
+  focus.attacked(summon, shooter, .4)
+  const defense = focus.update(summon, fight, .5)
+  assert.equal(defense.id, shooter.id)
+  assert.equal(defense.mode, 'provoked')
+  assert.equal(defense.scan, 0)
+  assert.equal(defense.display, true)
+})

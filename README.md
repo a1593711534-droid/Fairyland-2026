@@ -4,7 +4,7 @@
 
 - [直接試玩](https://a1593711534-droid.github.io/Fairyland-2026/)
 - [新版需求逐條驗收](docs/v1-audit.md)
-- [六屬精靈 2D 設定圖](docs/concept-art/)
+- [莉歐與六屬精靈 2D 設定圖](docs/concept-art/)
 
 ## 遊玩
 
@@ -29,4 +29,4 @@
 - 執行 `python tools/foliage-atlas.py` 產生樹冠的透明葉簇貼圖。
 - 現行六屬演出由 `src/render/elemental-effects.js` 繪製，火屬召喚另外使用 `src/render/fire-summon.js`，兩者共用可重複取樣的流場紋理。較早的 Effekseer 檔案可用 `python tools/author-effects.py /path/to/Effekseer` 重建，授權見 [Effekseer 授權](public/art/fx/effekseer-LICENSE.txt)。
 - `tools/idle_behaviors.py` 製作各物種的待機姿態和踏步轉身，`src/render/attention.js` 依位置與視線選擇注視方向。夥伴、移動、施法和命中都能改變注意力，再由物種的反應速度與姿態決定什麼時候轉頭或踏步轉向。
-- 精靈靠近可見敵人時會進入警戒姿態，偶爾掃視其他方向。被擊中時會優先盯住實際攻擊者並示威。仇恨用於注視和姿態演出。
+- 我方召喚精靈與野生精靈都會在靠近可見敵人時進入警戒姿態，偶爾掃視其他方向。被擊中時會優先盯住實際攻擊者並示威。仇恨用於注視和姿態演出。

@@ -212,7 +212,10 @@ export class Stage {
   bind(id, name, pos, options = {}) {
     const existing = this.units.get(id)
     if (existing) {
-      if (options.team !== undefined) existing.team = options.team
+      if (options.team !== undefined && existing.team !== options.team) {
+        existing.team = options.team
+        existing.focusAt = 0
+      }
       if (options.dead !== undefined) existing.dead = options.dead
       return existing.loading
     }
@@ -227,7 +230,7 @@ export class Stage {
       idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost), gaze: 0,
       nextLook: this.clock + (idle?.firstDelay ?? 2) * .64, headBase: new T.Quaternion(), lids: [],
       blinkAt: this.clock + (idle?.firstDelay ?? 2) * .92 }
-    if (idle && options.team) unit.vigilance = new Vigilance(name, idle.sample)
+    if (idle && this.mode === 'battle') unit.vigilance = new Vigilance(name, idle.sample)
     if (!options.ghost) {
       unit.shadow = new T.Mesh(new T.PlaneGeometry(name === 'hero' ? 1.65 : 1.95, name === 'hero' ? 1.70 : 2.35), this.shadows)
       unit.shadow.visible = !options.hidden
@@ -273,6 +276,10 @@ export class Stage {
     if (unit) {
       unit.pivot.visible = true
       if (unit.shadow) unit.shadow.visible = true
+      if (unit.vigilance) {
+        unit.focusAt = 0
+        this.updateFocus(unit)
+      }
     }
   }
 
@@ -377,7 +384,7 @@ export class Stage {
 
   attacked(id, attacker) {
     const unit = this.units.get(id)
-    if (!unit || !unit.vigilance || this.reduced) return
+    if (!unit?.vigilance) return
     unit.vigilance.attacked(unit, this.units.get(attacker), this.clock)
     unit.focusAt = 0
   }
