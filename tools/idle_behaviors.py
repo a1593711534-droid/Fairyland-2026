@@ -79,15 +79,15 @@ def grounding(bones, posture, tilt, drop, shift=0, rear_step=0, front_step=0, pa
         planted_leg(bones,name,rotation,displacement,Vector((0,step*posture,lift)))
 
 
-def turn_pose(bones, species, sign, t):
-    """Counter-rotate planted feet while the game turns the root by 60 degrees."""
-    nominal = TURN_ANGLE*sign
+def turn_pose(bones, species, sign, t, rear=False):
+    """Counter-rotate planted feet against the animated root turn."""
+    nominal = (math.pi*.79 if rear else TURN_ANGLE)*sign
     yaw = nominal*(.48*smooth(.17,.48,t)+.52*smooth(.54,.93,t))
     untwist = Quaternion(UP,-yaw)
     head = bones['Head']
     body = bones['Body']
     anticipation = window(0,.15,.27,.55,t)
-    head.rotation_euler = (0,.32*sign*anticipation,0)
+    head.rotation_euler = (0,(.53 if rear else .32)*sign*anticipation,0)
     settle = window(.19,.29,.44,.52,t)+window(.61,.70,.83,.94,t)
     body_shift = Vector((0,0,-.028*settle))
     translate(body,*body_shift)
@@ -99,7 +99,7 @@ def turn_pose(bones, species, sign, t):
         first = (name in ('FrontL','BackR')) == (sign>0)
         start,end = (.09,.51) if first else (.48,.94)
         p = smooth(start,end,t)
-        toe_lift = (.15 if species in ('bird','mouse','cat') else .106)*math.sin(math.pi*p)
+        toe_lift = (.15 if species in ('bird','mouse','cat') else .106)*math.sin(math.pi*p)*(1.30 if rear else 1)
         foot_angle = nominal*p-yaw
         if species in ('dog','cat'):
             anchor = bones['Paw'+name].bone.head_local
@@ -124,11 +124,12 @@ def turn_pose(bones, species, sign, t):
 
 def defensive_pose(bones, species, clip, t):
     body,head,tail = (bones[k] for k in ('Body','Head','Tail'))
-    guard = clip=='guard'
+    guard = clip.startswith('guard')
+    wide = clip in ('guard_alert','threat_display_wide')
     inhale = .5-.5*math.cos(t*math.tau)
     ready = 1 if guard else window(.01,.17,.76,1,t)
     warning = 0 if guard else window(.18,.29,.53,.81,t)
-    pulse = warning * (1 + .12*math.sin(t*math.tau*6))
+    pulse = warning * (1 + .12*math.sin(t*math.tau*6)) * (1.25 if wide else 1)
     if species=='dog':
         grounding(bones,ready,.10,.115,-.021,.028,-.092)
         translate(head,y=-.085*pulse,z=.052*pulse)
@@ -170,6 +171,12 @@ def defensive_pose(bones, species, clip, t):
         bend(tail,.34*ready,z=-.20*pulse)
     if 'Jaw' in bones:
         bend(bones['Jaw'],.44*pulse)
+    if wide:
+        breath=.45+.55*inhale
+        if species not in ('dog','cat'):
+            body.location += body.bone.matrix_local.to_3x3().inverted() @ Vector((0,0,-.024*breath*ready))
+        head.rotation_euler.x += .07*breath*ready-.11*pulse
+        tail.rotation_euler.z += .13*math.sin(t*math.tau)*ready
 
 
 def pose(rig, species, clip, t):
@@ -182,9 +189,9 @@ def pose(rig, species, clip, t):
 
     body, head, tail = (bones[key] for key in ('Body','Head','Tail'))
     if clip.startswith('turn_'):
-        turn_pose(bones,species,1 if clip=='turn_right' else -1,t)
+        turn_pose(bones,species,1 if clip.endswith('_right') else -1,t,clip.startswith('turn_rear'))
         return
-    if clip in ('guard','threat_display'):
+    if clip.startswith(('guard','threat_display')):
         defensive_pose(bones,species,clip,t)
         return
     if clip == 'idle':

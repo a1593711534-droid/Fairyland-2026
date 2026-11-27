@@ -352,7 +352,7 @@ test('all twelve Blender forms and the hero provide exported action clips', asyn
     const all = root.animations.map(a => a.name)
     const actions = ['appear','attack','capture','caught','death','evolve','hit','idle','skill','summon','turn_left','turn_right','walk']
     if (file !== 'hero') {
-      actions.push('guard', 'threat_display')
+      actions.push('guard', 'threat_display', 'guard_alert', 'threat_display_wide', 'turn_rear_left', 'turn_rear_right')
       assert.ok(root.animations.find(action => action.name === 'threat_display').channels.length >= 4)
     }
     assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(), actions.sort())

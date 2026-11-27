@@ -291,7 +291,8 @@ export class Stage {
     const idle = !options.ghost && idleSequence(name, id, portrait, this.visualSeed + Math.floor(this.clock * 1000))
     const unit = { id, pivot, actions: new Map(), dead: Boolean(options.dead), idle, portrait, team: options.team,
       idleIn: idle?.firstDelay, idlePause: idle?.firstDelay, ghost: Boolean(options.ghost), gaze: 0,
-      nextLook: this.clock + (idle?.firstDelay ?? 2) * .64, headBase: new T.Quaternion(), lids: [],
+      nextLook: this.clock + (idle?.firstDelay ?? 2) * .64, headBase: new T.Quaternion(),
+      bodyBase: new T.Quaternion(), shoulder: 0, lids: [],
       blinkAt: this.clock + (idle?.firstDelay ?? 2) * .92 }
     if (idle && this.mode === 'battle') unit.vigilance = new Vigilance(name, idle.sample)
     if (!options.ghost) {
@@ -327,6 +328,7 @@ export class Stage {
       })
       pivot.add(model.scene)
       unit.head = model.scene.getObjectByName('Head')
+      unit.body = model.scene.getObjectByName('Body')
       unit.mixer = new T.AnimationMixer(model.scene)
       for (const clip of model.animations) unit.actions.set(clip.name, unit.mixer.clipAction(clip))
       if (!unit.ghost) this.play(id, unit.dead ? 'death' : 'idle', unit.dead, unit.dead)
@@ -468,7 +470,7 @@ export class Stage {
     const turning = unit.stepTurn
     if (turning && current.startsWith('turn_')) {
       const progress = turnProgress(unit.current.time / unit.current.getClip().duration)
-      unit.pivot.rotation.y = turning.started + turning.direction * TURN_ANGLE * progress
+      unit.pivot.rotation.y = turning.started + turning.angle * progress
     } else if (unit.headingGoal !== null && unit.headingGoal !== undefined) {
       unit.pivot.rotation.y = advanceBearing(unit.pivot.rotation.y, unit.headingGoal, dt * (unit.travel ? 14 : 20))
       if (Math.abs(angularDifference(unit.pivot.rotation.y, unit.headingGoal)) < .005) unit.headingGoal = null
@@ -476,30 +478,39 @@ export class Stage {
 
     const notice = unit.notice
     const focus = unit.focus
-    const alertPose = current === 'guard' || current === 'threat_display'
+    const alertPose = current?.startsWith('guard') || current?.startsWith('threat_display')
     const looking = !this.reduced && unit.idle && !unit.travel && (focus || notice && this.clock >= notice.start &&
       this.clock < notice.end) && (current?.startsWith('idle') || alertPose || turning)
     let gaze = 0
+    let shoulder = 0
     if (looking) {
       const angle = angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, (focus ?? notice).point))
-      const limit = unit.idle.neck
+      const limit = unit.idle.neck * (focus?.multi ? 1.47 : 1)
       const scan = focus?.scan ?? 0
       const offset = Math.abs(angle + scan) > limit && Math.abs(angle - scan) < Math.abs(angle + scan) ? -scan : scan
       gaze = Math.max(-limit, Math.min(limit, angle + offset)) * (turning ? .54 : 1)
-      const focusedStep = focus && this.clock >= (unit.focusStepAt ?? 0)
+      if (focus?.checking && !focus.step && Math.abs(angle) > 1.08) {
+        shoulder = Math.sign(angle) * Math.min(.32, (Math.abs(angle) - 1.08) * .25)
+      }
+      const focusedStep = focus?.step && this.clock >= (unit.focusStepAt ?? 0)
       const fleetingStep = !focus && notice.steps > 0 && this.clock >= notice.stepAt
-      if (!turning && (focusedStep || fleetingStep) && (current === 'idle' || current === 'guard') && Math.abs(angle) > .73) {
-        if (focusedStep) unit.focusStepAt = this.clock + .66
+      if (!turning && (focusedStep || fleetingStep) &&
+          (current === 'idle' || current?.startsWith('guard')) && Math.abs(angle) > (focus?.multi ? .89 : .73)) {
+        if (focusedStep) unit.focusStepAt = this.clock + (focus.multi ? .42 : .66)
         else {
           notice.steps--
           notice.stepAt = this.clock + .68
           notice.end = Math.max(notice.end, this.clock + 1.62)
         }
         const direction = Math.sign(angle)
-        const name = direction > 0 ? 'turn_right' : 'turn_left'
+        const rear = focus?.multi && Math.abs(angle) > 2.26
+        const suffix = direction > 0 ? 'right' : 'left'
+        const wide = 'turn_rear_' + suffix
+        const name = rear && unit.actions.has(wide) ? wide : 'turn_' + suffix
         if (unit.actions.has(name)) {
           unit.headingGoal = null
-          unit.stepTurn = { started: unit.pivot.rotation.y, direction }
+          const sweep = name === wide ? Math.PI * .79 : TURN_ANGLE
+          unit.stepTurn = { started: unit.pivot.rotation.y, angle: direction * Math.min(sweep, Math.abs(angle)) }
           this.play(unit.id, name)
         }
       }
@@ -507,6 +518,13 @@ export class Stage {
       unit.notice = null
     }
     unit.gaze += (gaze - unit.gaze) * (this.reduced ? 1 : 1 - Math.exp(-dt * (unit.idle?.quick < .18 ? 13 : 9)))
+    unit.shoulder += (shoulder - unit.shoulder) * (this.reduced ? 1 : 1 - Math.exp(-dt * 7))
+    if (unit.body && Math.abs(unit.shoulder) > .001) {
+      unit.bodyBase.copy(unit.body.quaternion)
+      headRotation.setFromAxisAngle(turnAxis, unit.shoulder)
+      unit.body.quaternion.multiply(headRotation)
+      unit.hasShoulder = true
+    }
     if (unit.head && Math.abs(unit.gaze) > .001) {
       unit.headBase.copy(unit.head.quaternion)
       headRotation.setFromAxisAngle(turnAxis, unit.gaze)
@@ -528,29 +546,31 @@ export class Stage {
   updateIdle(unit, dt) {
     const action = unit.current
     if (!action || !unit.pivot.visible) return
+    const focus = unit.focus
+    const watch = focus?.multi && unit.actions.has('guard_alert') ? 'guard_alert' : 'guard'
     if (unit.returnToRest && action.time >= action.getClip().duration - .001) {
-      this.play(unit.id, unit.focus && unit.actions.has('guard') ? 'guard' : 'idle', false)
+      this.play(unit.id, focus && unit.actions.has(watch) ? watch : 'idle', false)
       return
     }
     const current = unit.currentName
-    const resting = current.startsWith('idle') || current === 'guard' || current === 'threat_display'
+    const resting = current.startsWith('idle') || current.startsWith('guard') || current.startsWith('threat_display')
     if (this.reduced) {
       if ((resting || current.startsWith('turn_')) && current !== 'idle') this.play(unit.id, 'idle', false)
       return
     }
     if (!unit.idle || unit.travel) return
-    const focus = unit.focus
     if (focus) {
-      if (!resting || current === 'threat_display') return
+      if (!resting || current.startsWith('threat_display')) return
       if (focus.display && Math.abs(angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, focus.point))) < .75 &&
           unit.actions.has('threat_display')) {
-        unit.vigilance.consumeDisplay()
+        unit.vigilance.consumeDisplay(focus.id)
         focus.display = false
-        this.play(unit.id, 'threat_display')
-      } else if (current !== 'guard' && unit.actions.has('guard')) this.play(unit.id, 'guard', false)
+        const show = focus.multi && unit.actions.has('threat_display_wide') ? 'threat_display_wide' : 'threat_display'
+        this.play(unit.id, show)
+      } else if (current !== watch && unit.actions.has(watch)) this.play(unit.id, watch, false)
       return
     }
-    if (current === 'guard') {
+    if (current.startsWith('guard')) {
       this.play(unit.id, 'idle', false)
       return
     }
@@ -886,6 +906,10 @@ export class Stage {
       if (unit.hasGaze) {
         unit.head.quaternion.copy(unit.headBase)
         unit.hasGaze = false
+      }
+      if (unit.hasShoulder) {
+        unit.body.quaternion.copy(unit.bodyBase)
+        unit.hasShoulder = false
       }
       if (unit.pivot.visible && !(this.reduced && unit.currentName === 'idle')) unit.mixer?.update(dt)
       this.tickTravel(unit, dt)

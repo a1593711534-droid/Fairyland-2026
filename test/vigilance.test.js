@@ -69,3 +69,52 @@ test('summoned allies ignore the summoner and use guard and retaliation toward h
   assert.equal(defense.scan, 0)
   assert.equal(defense.display, true)
 })
+
+test('a summoned ally checks threats on both sides and repeatedly returns to its primary', () => {
+  const actor = unit('actor', 'ally', -8, -1)
+  const front = unit('front', 'wild', -6.5, -1)
+  const rear = unit('rear', 'enemy', -11.2, -1)
+  const flank = unit('flank', 'enemy', -8, 1.2)
+  const friendly = unit('friendly', 'ally', -8, -.5)
+  const fight = new Map([actor, front, rear, flank, friendly].map(item => [item.id, item]))
+  const focus = new Vigilance('dog', () => .2)
+  const seen = new Map()
+  let returns = 0
+  let before
+  for (let t = 0; t < 12; t += .1) {
+    const current = focus.update(actor, fight, t)
+    assert.equal(current.primary, front.id)
+    assert.equal(current.multi, true)
+    if (current.id !== before && current.id === front.id) returns++
+    before = current.id
+    seen.set(current.id, current.step)
+  }
+  assert.ok(returns >= 3)
+  assert.equal(seen.has(friendly.id), false)
+  assert.equal(seen.get(rear.id), true)
+  assert.equal(seen.has(flank.id), true)
+})
+
+test('provoked focus remembers both attackers, and a distant rear watch uses a glance', () => {
+  const actor = unit('actor', 'wild', -6, -1)
+  const front = unit('front', 'ally', -4.0, -1)
+  const rear = unit('rear', 'ally', -11.8, -1)
+  const fight = new Map([actor, front, rear].map(item => [item.id, item]))
+  const focus = new Vigilance('dog', () => .2)
+  assert.equal(focus.update(actor, fight, 0).id, 'front')
+  const initialRear = focus.update(actor, fight, .8)
+  assert.equal(initialRear.id, 'rear')
+  assert.equal(initialRear.step, false)
+  focus.attacked(actor, rear, 1)
+  focus.attacked(actor, front, 1.2)
+  assert.equal(focus.update(actor, fight, 1.21).id, 'front')
+  focus.consumeDisplay('front')
+  const next = focus.update(actor, fight, 2.32)
+  assert.equal(next.mode, 'provoked')
+  assert.equal(next.primary, 'front')
+  assert.equal(next.id, 'rear')
+  assert.equal(next.step, true)
+  assert.equal(next.display, true)
+  rear.dead = true
+  assert.equal(focus.update(actor, fight, 2.4).multi, false)
+})

@@ -1,80 +1,126 @@
 import { areOpponents } from '../game/combat.js'
 import { distance, lineOfSight } from '../game/geometry.js'
+import { angularDifference, bearing } from './attention.js'
 
 const ranges = { turtle: 5.4, dino: 6.6, cat: 6.8, bird: 7.3, mouse: 5.9, dog: 7.0 }
-
-function opposite(unit, other) {
-  return other && unit.id !== other.id && !other.dead && !other.ghost && other.pivot.visible &&
-    Boolean(unit.team && other.team) && areOpponents(unit, other)
-}
+const opposite = (unit, other) => other && unit.id !== other.id && !other.dead && !other.ghost &&
+  other.pivot.visible && Boolean(unit.team && other.team) && areOpponents(unit, other)
 
 export class Vigilance {
   constructor(species, sample) {
-    this.range = ranges[species.replace(/-evolved$/, '')]
+    this.kind = species.replace(/-evolved$/, '')
+    this.range = ranges[this.kind]
     this.sample = sample
     this.state = null
-    this.attack = null
+    this.attacks = new Map()
+    this.checked = new Map()
   }
 
   attacked(unit, attacker, now) {
     if (!this.range || !opposite(unit, attacker)) return
-    const repeat = this.attack?.id === attacker.id && now - this.attack.hitAt < 1.7
-    this.attack = { id: attacker.id, point: attacker.pivot.position.clone(),
-      until: now + 8.4, hitAt: now, display: !repeat || this.attack.display }
+    const prior = this.attacks.get(attacker.id)
+    this.attacks.set(attacker.id, {
+      point: attacker.pivot.position.clone(), until: now + 8.4, hitAt: now,
+      display: prior?.display || !prior || now - prior.hitAt >= 1.7,
+    })
+    if (this.state?.glance) this.state.glance = null
   }
 
   update(unit, units, now) {
     if (!this.range || unit.dead || !unit.pivot.visible) return null
     const from = unit.pivot.position
-    if (this.attack) {
-      const threat = units.get(this.attack.id)
-      if (now < this.attack.until && opposite(unit, threat)) {
-        const target = threat.pivot.position
-        if (lineOfSight(from, target)) {
-          this.attack.point.copy(target)
-          if (distance(from, target) < this.range + 1.8)
-            this.attack.until = Math.max(this.attack.until, now + 3.1)
-        }
-        this.state = { mode: 'provoked', id: threat.id, point: this.attack.point, scan: 0, display: this.attack.display }
-        return this.state
-      }
-      this.attack = null
-    }
-
-    const prior = this.state?.mode === 'guard' ? this.state : null
-    const old = prior && units.get(prior.id)
-    const visible = other => lineOfSight(from, other.pivot.position)
-    let target = opposite(unit, old) && distance(from, old.pivot.position) < this.range + .9 &&
-      (visible(old) || now < prior.lastSeen + .85) ? old : null
-    let radius = target ? distance(from, target.pivot.position) * .71 : this.range
+    const old = this.state
+    const threats = []
     for (const other of units.values()) {
-      if (!opposite(unit, other) || other === target) continue
-      const gap = distance(from, other.pivot.position)
-      if (gap < radius && visible(other)) { target = other; radius = gap }
+      if (!opposite(unit, other)) {
+        this.attacks.delete(other.id)
+        this.checked.delete(other.id)
+        continue
+      }
+      const target = other.pivot.position
+      const gap = distance(from, target)
+      let attack = this.attacks.get(other.id)
+      if (attack && now >= attack.until) {
+        this.attacks.delete(other.id)
+        attack = null
+      }
+      const hold = old?.mode === 'guard' && old.primary === other.id
+      if (!attack && gap > this.range + (hold ? .9 : 0)) continue
+      const visible = lineOfSight(from, target)
+      if (attack && visible) {
+        attack.point.copy(target)
+        if (gap < this.range + 1.8) attack.until = Math.max(attack.until, now + 3.1)
+      }
+      if (attack || visible || hold && now < old.lastSeen + .85) {
+        threats.push({ id: other.id, gap, attack, visible, point: attack?.point ?? (visible ? target : old.primaryPoint) })
+      }
     }
-    if (!target) {
+    for (const id of this.attacks.keys()) if (!units.has(id)) this.attacks.delete(id)
+    for (const id of this.checked.keys()) if (!threats.some(other => other.id === id)) this.checked.delete(id)
+    if (!threats.length) {
       this.state = null
       return null
     }
-    if (prior?.id !== target.id) {
-      this.state = { mode: 'guard', id: target.id, point: target.pivot.position.clone(), lastSeen: now,
-        scan: 0, scanUntil: 0, nextScan: now + 1.7 + this.sample() * 2.0, angle: 0 }
+    const attackers = threats.filter(other => other.attack).sort((a,b) => b.attack.hitAt - a.attack.hitAt || a.gap - b.gap)
+    const nearest = threats.reduce((a,b) => a.gap <= b.gap ? a : b)
+    const retained = old?.mode === 'guard' && threats.find(other => other.id === old.primary)
+    const main = attackers[0] ?? (retained && nearest.gap >= retained.gap * .71 ? retained : nearest)
+    const mode = main.attack ? 'provoked' : 'guard'
+    const direction = bearing(from, main.point)
+    const secondary = threats.filter(other => other.id !== main.id && (other.visible || other.attack) &&
+      Math.abs(angularDifference(direction, bearing(from, other.point))) > .66)
+    const multi = secondary.length > 0
+    const state = old?.mode === mode && old.primary === main.id ? old : {
+      mode, primary: main.id, primaryPoint: main.point.clone(), lastSeen: now,
+      scan: 0, scanUntil: 0, nextScan: now + 1.7 + this.sample() * 2, angle: 0,
+      nextCheck: now + (mode === 'provoked' ? .94 : .63) + this.sample() * .25, glance: null,
     }
-    const watch = this.state
-    if (visible(target)) {
-      watch.point.copy(target.pivot.position)
-      watch.lastSeen = now
+    state.primaryPoint.copy(main.point)
+    if (main.visible) state.lastSeen = now
+    let focus = main
+    if (multi) {
+      const ongoing = state.glance && secondary.find(other => other.id === state.glance.id)
+      if (ongoing && now < state.glance.until) {
+        focus = ongoing
+      } else {
+        state.glance = null
+        if (now >= state.nextCheck) {
+          const choices = secondary.map(other => {
+            const last = this.checked.get(other.id)
+            const time = last === undefined ? 4 : Math.min(4, now - last)
+            return { other, priority: time * 1.7 + (other.attack ? 3.4 : 0) + (this.range - other.gap) * .58 }
+          })
+          focus = choices.reduce((a,b) => a.priority >= b.priority ? a : b).other
+          const separation = Math.abs(angularDifference(direction, bearing(from, focus.point)))
+          const rear = separation > 2.05
+          const step = separation > 1.07 && (Boolean(focus.attack) || focus.gap <= this.range * (rear ? .72 : .52))
+          const duration = (step ? (rear ? 1.88 : 1.2) : .64) * (this.kind === 'turtle' ? 1.25 : 1)
+          this.checked.set(focus.id, now)
+          state.glance = { id: focus.id, step, until: now + duration }
+          state.nextCheck = state.glance.until + (mode === 'provoked' ? 1.04 : .69) + this.sample() * .36
+        }
+      }
+      state.scan = 0
+    } else {
+      state.glance = null
+      if (mode === 'guard' && now >= state.nextScan) {
+        state.scanUntil = now + .36 + this.sample() * .32
+        state.nextScan = state.scanUntil + 2.05 + this.sample() * 2.75
+        state.angle = (this.sample() < .5 ? -1 : 1) * (.31 + this.sample() * .28)
+      }
+      state.scan = mode === 'guard' && now < state.scanUntil ? state.angle : 0
     }
-    if (now >= watch.nextScan) {
-      watch.scanUntil = now + .36 + this.sample() * .32
-      watch.nextScan = watch.scanUntil + 2.05 + this.sample() * 2.75
-      watch.angle = (this.sample() < .5 ? -1 : 1) * (.31 + this.sample() * .28)
-    }
-    watch.scan = now < watch.scanUntil ? watch.angle : 0
-    return watch
+    const checking = focus !== main
+    Object.assign(state, {
+      id: focus.id, point: focus.point, multi, checking,
+      step: !checking || state.glance.step, display: Boolean(focus.attack?.display),
+    })
+    this.state = state
+    return state
   }
 
-  consumeDisplay() {
-    if (this.attack) this.attack.display = false
+  consumeDisplay(id = this.state?.id) {
+    const attack = this.attacks.get(id)
+    if (attack) attack.display = false
   }
 }
