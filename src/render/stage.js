@@ -190,8 +190,9 @@ export class Stage {
     this.motes.visible = mode === 'battle'
     this.groundShadows.visible = mode !== 'menu'
     this.ambient.intensity = mode === 'world' ? 1.42 : landscape ? 2.18 : 1.95
-    this.key.intensity = mode === 'world' ? 2.14 : landscape ? 2.64 : 3.48
-    this.rim.intensity = mode === 'world' ? .76 : landscape ? 2.45 : 2.82
+    this.key.intensity = mode === 'world' ? 2.42 : landscape ? 2.64 : 3.48
+    this.rim.intensity = mode === 'world' ? .56 : landscape ? 2.45 : 2.82
+    this.key.position.set(...(mode === 'world' ? [-28, 34, -19] : [-11, 12, 8]))
     for (const tick of this.effects) tick(Infinity)
     this.effects = []
     this.host.hidden = mode === 'menu'

@@ -2,7 +2,7 @@ import atlas from './continent.json' with { type: 'json' }
 import heights from './continent-heights.json' with { type: 'json' }
 
 export const { name: continentName, countries, sites } = atlas
-export const continentView = { x: 0, z: -.4, azimuth: .06, elevation: 1.06, zoom: 76 }
+export const continentView = { x: 0, z: -.4, azimuth: .025, elevation: .98, zoom: 76 }
 
 export function atlasGround(x, z) {
   const { minX, minZ, step, width, rows } = heights

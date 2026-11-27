@@ -377,6 +377,15 @@ kbd { color: var(--gold-light) }
 #app[data-scene="world"] .world-card { border: 0; background: transparent; box-shadow: none; padding: 0; text-shadow: 0 2px 4px #081412 }
 #app[data-scene="world"] .world-screen::after { background: linear-gradient(180deg, #071311b5, transparent 16% 78%, #071311d9) }
 #app[data-scene="world"] .topbar .subtle { background: transparent; border-color: transparent; text-shadow: 0 2px 5px #081412 }
+@media (min-width: 761px) {
+  #app[data-scene="world"]:not(.touch-layout) .world-card {
+    bottom: clamp(43px, 6.8vh, 72px);
+    width: min(275px, 30vw);
+  }
+  #app[data-scene="world"]:not(.touch-layout) .world-card .eyebrow { display: none }
+  #app[data-scene="world"]:not(.touch-layout) .world-card h2 { font-size: 19px; margin: 0 0 3px }
+  #app[data-scene="world"]:not(.touch-layout) .world-card .full { width: auto; min-height: 38px; margin-top: 5px }
+}
 @media (max-width: 620px) {
   #app[data-scene="world"] .topbar { flex-wrap: wrap; gap: 0; }
   #app[data-scene="world"] .top-right { gap: 0; flex-wrap: wrap; }
