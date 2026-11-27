@@ -21,11 +21,17 @@ export function summonPanel(game, actor, plan, sign, pending, touch = false) {
       data: unit.id, disabled: chosen < 0 && budget < info.summon,
     })
   }).join('')
-  return '<div class="plan-summary"><strong>已配置 ' + plan.length + ' 隻</strong><span>消耗 ' + spent + '　剩餘 ' + budget + ' MP</span></div>' +
-    (budget < rules.tetherMana && plan.length ? '<p class="plan-warning">魔力將低於 ' + rules.tetherMana + '，場上夥伴會脫離掌控。</p>' : '') +
-    '<div class="inventory-rows">' + (rows || '<p class="muted">沒有可召喚的精靈。</p>') + '</div>' +
-    button('召喚 ' + plan.length + ' 隻', 'confirm-summons', { css: 'primary full', disabled: !plan.length,
-      title: touch ? '召喚 ' + plan.length + ' 隻' : '提交召喚（Enter）' })
+  const summary = '<div class="plan-summary"><strong>已配置 ' + plan.length + ' 隻</strong><span>消耗 ' + spent +
+    '　剩餘 ' + budget + ' MP</span></div>'
+  const warning = budget < rules.tetherMana && plan.length
+    ? '<p class="plan-warning">魔力將低於 ' + rules.tetherMana + '，場上夥伴會脫離掌控。</p>' : ''
+  const roster = '<div class="inventory-rows">' + (rows || '<p class="muted">沒有可召喚的精靈。</p>') + '</div>'
+  const submit = button('召喚 ' + plan.length + ' 隻', 'confirm-summons', {
+    css: 'primary full', disabled: !plan.length, title: touch ? '' : '提交召喚（Enter）',
+  })
+  return touch ? roster + '<div class="summon-line">' + summary +
+    button(pending ? '取消落點' : '取消', 'cancel-target', { css: 'action' }) + submit + '</div>' + warning :
+    summary + warning + roster + submit
 }
 
 export function kitPanel(unit, { battle = false, problem }) {

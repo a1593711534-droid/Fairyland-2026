@@ -243,14 +243,18 @@ export class Stage {
     const { x, z, azimuth, elevation, zoom } = this.view
     const aspect = this.width / this.height
     const h = zoom / Math.min(1.8, aspect) * 1.64
-    this.camera.left = -h * aspect / 2
-    this.camera.right = h * aspect / 2
-    this.camera.top = h / 2
-    this.camera.bottom = -h / 2
+    const portrait = ['choose', 'inspect'].includes(this.mode)
+    const staged = this.touchLayout.matches && portrait
+    const horizontal = staged && aspect >= 1 ? -h * aspect * .19 : 0
+    const vertical = staged && aspect < 1 ? -h * .13 : 0
+    this.camera.left = -h * aspect / 2 + horizontal
+    this.camera.right = h * aspect / 2 + horizontal
+    this.camera.top = h / 2 + vertical
+    this.camera.bottom = -h / 2 + vertical
     const radius = 33
     this.camera.position.set(x + Math.sin(azimuth) * radius * Math.cos(elevation),
       Math.sin(elevation) * radius, z + Math.cos(azimuth) * radius * Math.cos(elevation))
-    this.camera.lookAt(x, this.mode === 'choose' || this.mode === 'inspect' ? 1.15 : 0, z)
+    this.camera.lookAt(x, portrait ? 1.15 : 0, z)
     this.camera.updateProjectionMatrix()
     this.camera.updateMatrixWorld()
   }

@@ -23,12 +23,15 @@ const dialog = document.querySelector('#dialog')
 const toast = document.querySelector('#toast')
 const touchLayout = matchMedia('(any-pointer: coarse)')
 const stageHost = document.querySelector('#stage')
-const touchLayoutObserver = new ResizeObserver(positionTouchStage)
+const touchLayoutObserver = new ResizeObserver(measureTouchHud)
+let touchHudTop = 0
+let touchHudBottom = 0
 let scene = 'menu'
 let game = null
 let modal = ''
 let settings = readSettings()
 let targetMode = 'move'
+let touchCommands = false
 let pendingSummon = null
 let placementPlan = []
 let shopTarget = 'hero'
@@ -66,16 +69,14 @@ function notify(message) {
 
 const sound = (type = 'tap', element) => audio.play(type, element)
 
-function positionTouchStage() {
+function measureTouchHud() {
   if (!touchLayout.matches || !stage || stageHost.hidden) return
   const appRect = app.getBoundingClientRect()
   const top = ui.querySelector('.topbar')?.getBoundingClientRect()
-  const bottom = ui.querySelector('.touch-dock, .character-copy')?.getBoundingClientRect()
-  const head = top ? Math.max(0, Math.ceil(top.bottom - appRect.top) + 8) : 0
-  const foot = bottom ? Math.max(0, Math.ceil(appRect.bottom - bottom.top) + 8) : 0
-  app.style.setProperty('--stage-head', head + 'px')
-  app.style.setProperty('--stage-foot', foot + 'px')
-  stage.layout()
+  const bottom = ui.querySelector('.touch-dock')?.getBoundingClientRect()
+  touchHudTop = top ? Math.max(0, Math.ceil(top.bottom - appRect.top) + 2) : 0
+  touchHudBottom = bottom ? Math.max(0, Math.ceil(appRect.bottom - bottom.top) + 2) : 0
+  app.style.setProperty('--hud-top', touchHudTop + 'px')
 }
 
 function observeTouchLayout() {
@@ -84,13 +85,12 @@ function observeTouchLayout() {
   app.dataset.scene = scene
   if (!touchLayout.matches || scene === 'menu') return
   for (const control of ui.querySelectorAll('.topbar, .touch-dock')) touchLayoutObserver.observe(control)
-  positionTouchStage()
+  measureTouchHud()
 }
 
 function cameraTools() {
   if (!touchLayout.matches) return ''
-  return '<div class="touch-camera" role="group" aria-label="鏡頭"><span>' +
-    (['choose', 'inspect'].includes(scene) ? '單指旋轉 · 雙指縮放' : '拖曳平移 · 雙指縮放與旋轉') + '</span>' +
+  return '<div class="touch-camera" role="group" aria-label="鏡頭">' +
     button('−', 'camera-out', { title: '縮小鏡頭' }) +
     button('+', 'camera-in', { title: '放大鏡頭' }) +
     button('⌖', 'camera-reset', { title: '重設鏡頭' }) + '</div>'
@@ -120,6 +120,7 @@ async function openGame(enter) {
 
 function setScene(next) {
   scene = next
+  touchCommands = false
   moveHistory = []
   undoAfterWalk = walkingReversible = false
   toast.classList.remove('show')
@@ -229,10 +230,12 @@ function renderWorld() {
         move === 'heal' ? '休息' : move === 'enter' ? '開始戰鬥' : '前往'),
     })]
   })
-  ui.innerHTML = '<section class="overlay world-screen"><header class="topbar">' + brand + '<div class="top-right">' +
+  ui.innerHTML = '<section class="overlay world-screen"><header class="topbar">' +
+    (touch ? '<h1 class="world-name">月見森林</h1>' : brand) + '<div class="top-right">' +
     button('物品', 'world-kit', { css: 'subtle', disabled: busy }) +
     button('精靈手冊', 'collection', { css: 'subtle', disabled: busy }) + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
-    button('選單', 'pause', { css: 'subtle' }) + '</div></header><div class="world-title"><div class="eyebrow"><i></i> 大地圖</div><h1>月見森林</h1></div>' +
+    button('選單', 'pause', { css: 'subtle' }) + '</div></header>' +
+    (touch ? '' : '<div class="world-title"><div class="eyebrow"><i></i> 大地圖</div><h1>月見森林</h1></div>') +
     '<div class="world-dock' + (touch ? ' touch-dock' : '') + '"><aside class="world-card"><div class="eyebrow">' + waypointTypes[type].label + '</div><h2>' + stop.name + '</h2><p>' + details + '</p>' +
     button(action[0], action[1], { css: 'primary full', disabled: busy || Boolean(seen) || (action[1] === 'enter' && !game.hero.hp) }) + '</aside>' +
     (touch ? '<nav class="waypoints-list" aria-label="地圖地點">' +
@@ -257,6 +260,16 @@ function card(actor) {
 
 const turnName = unit => unit.team === 'ally' ? '我方' : unit.team === 'enemy' ? '敵方' : unit.practice ? '練習' : '野生'
 const shortStatus = unit => Object.keys(unit.statuses).map(key => status[key].name).join('・')
+const recentEvents = battle => battle.events.filter(event => event.type === 'text').slice(-3)
+
+function compactStatus(actor) {
+  return button(sign(elementOf(actor), false) + ' <strong>' + titleOf(actor) + '</strong>' +
+    '<span>生命 ' + actor.hp + '/' + stat(actor, 'hp') + '</span>' +
+    (actor.kind === 'hero' ? '<span>魔力 ' + actor.mana + '</span>' : '') +
+    '<span>移動 ' + meters(actor.movement) + '</span>', 'status', {
+      css: 'fighter compact-status', title: '查看' + titleOf(actor) + '的狀態與最近行動', disabled: busy,
+    })
+}
 
 function renderBattle() {
   const b = game.battle
@@ -268,9 +281,17 @@ function renderBattle() {
   const touch = touchLayout.matches
   app.classList.toggle('placing-summon', touch && targetMode === 'summon' && Boolean(pendingSummon))
   const lastScroll = ui.querySelector('.initiative')?.scrollLeft ?? 0
+  const summonScroll = ui.querySelector('.summon-dock .inventory-rows')?.scrollLeft ?? 0
   const action = (label, code, isDisabled = false, data = code, css = '') => button(label, code, {
     css: 'action ' + css + (targetMode === data ? ' selected' : ''), disabled: !canAct || isDisabled, data,
   })
+  const openCommands = touch && (touchCommands || targetMode !== 'move') && actor.team === 'ally' && !b.result
+  const cancel = targetMode !== 'move' ? action('取消', 'cancel-target') : ''
+  const back = targetMode === 'move' && moveHistory.length
+    ? button(touch ? '↶ 復原移動' : '撤回移動', 'undo-move', {
+      css: 'action move-back', disabled: busy && !walkingReversible,
+      title: touch ? '復原移動' : '撤回上一步移動（右鍵）',
+    }) : ''
   const spell = skills[skillFor(actor)]
   const combatBar = '<div class="combat-actions" role="group" aria-label="戰鬥指令">' +
     action('攻擊', 'mode', !actor.action, 'attack') +
@@ -278,16 +299,14 @@ function renderBattle() {
     (actor.kind === 'hero' ? action('召喚', 'summons', !summonable, 'summon') +
       action('收服', 'mode', !actor.action || actor.mana < rules.captureMana, 'capture') :
       action('撤回', 'recall')) +
-    action('物品', 'battle-kit') + action('狀態', 'status') + action('脫離', 'disengage', !actor.action) +
+    action('物品', 'battle-kit') + (touch ? '' : action('狀態', 'status')) + action('脫離', 'disengage', !actor.action) +
     action('衝刺', 'rush', !actor.action) + action('待機', 'end', false, 'end', 'wait-turn') +
-    (touch ? '' : targetMode !== 'move' ? action('取消', 'cancel-target') :
-      moveHistory.length ? button('撤回移動', 'undo-move', { css: 'action move-back', disabled: busy && !walkingReversible,
-        title: '撤回上一步移動（右鍵）' }) : '') + '</div>'
+    (touch ? '' : cancel + back) + '</div>'
   const summon = targetMode === 'summon' ? '<aside class="summon-dock" aria-label="召喚配置">' +
     summonPanel(game, actor, placementPlan, sign, pendingSummon, touch) + '</aside>' : ''
-  const back = touch ? (targetMode !== 'move'
-    ? action(pendingSummon ? '取消落點' : '取消', 'cancel-target')
-    : button('↶ 復原移動', 'undo-move', { css: 'action move-back', disabled: !moveHistory.length || (busy && !walkingReversible) })) : ''
+  const toggle = touch && targetMode === 'move' && actor.team === 'ally' && !b.result
+    ? button(openCommands ? '收起指令' : '指令', 'commands', { css: 'action command-toggle',
+      title: openCommands ? '收起戰鬥指令' : '開啟戰鬥指令', disabled: busy }) : ''
   ui.innerHTML = '<section class="overlay battle-screen"><header class="topbar"><div><div class="eyebrow">' + nodeName(b.map) +
     '</div><h2 class="round">第 ' + b.round + ' 回合</h2></div><div class="initiative" aria-label="先攻順序">' +
     b.order.map(id => unitById(b, id)).filter(unit => unit.hp && !unit.dismissed).map(unit => {
@@ -301,14 +320,21 @@ function renderBattle() {
       })
     }).join('') + '</div><div class="top-right">' + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
       button('選單', 'pause', { css: 'subtle', disabled: busy }) + '</div></header>' +
-    '<div class="battle-phase"><span class="live-dot"></span>' + (busy ? '行動結算中' : turnName(actor) + '回合') + '</div>' +
-    '<div id="preview"></div><div class="combat-log" aria-live="polite">' +
-    b.events.filter(event => event.type === 'text').slice(-3).map(event => '<div>' + event.text + '</div>').join('') + '</div>' +
-    '<footer class="battle-footer' + (touch ? ' touch-dock' : '') + '">' + card(actor) +
-    '<div class="battle-control">' + (touch && summon ? summon : combatBar) +
-    '<div class="battle-guidance"><div class="battle-caption">' + hint() + '</div>' + back + '</div></div>' +
-    '</footer>' + cameraTools() + '</section>'
-  if (touch) ui.querySelector('.initiative').scrollLeft = lastScroll
+    '<div id="preview"></div>' + (touch
+      ? '<footer class="battle-footer touch-dock">' + (openCommands ? summon || combatBar : '') +
+        '<div class="battle-caption">' + hint() + '</div>' +
+        (summon ? '' : '<div class="battle-strip">' + compactStatus(actor) + '<div class="battle-strip-actions">' +
+          cancel + back + toggle + '</div></div>') + '</footer>'
+      : '<div class="battle-phase"><span class="live-dot"></span>' + (busy ? '行動結算中' : turnName(actor) + '回合') + '</div>' +
+        '<div class="combat-log" aria-live="polite">' +
+        recentEvents(b).map(event => '<div>' + event.text + '</div>').join('') + '</div>' +
+        '<footer class="battle-footer">' + card(actor) + '<div class="battle-control">' + combatBar +
+        '<div class="battle-caption">' + hint() + '</div></div></footer>') + cameraTools() + '</section>'
+  if (touch) {
+    ui.querySelector('.initiative').scrollLeft = lastScroll
+    const roster = ui.querySelector('.summon-dock .inventory-rows')
+    if (roster) roster.scrollLeft = summonScroll
+  }
   tags.innerHTML = settings.labels || ['attack', 'skill', 'capture'].includes(targetMode)
     ? b.units.filter(u => u.hp > 0 && !u.dismissed).map(u => {
       const selected = u.id === actor.id
@@ -325,9 +351,9 @@ function renderBattle() {
 function hint() {
   if (busy) return '行動結算中'
   const touch = touchLayout.matches
-  if (touch && targetMode === 'move') return '點青色地面移動。點射程內的敵人普攻。金色路線會引發借機攻擊。'
+  if (touch && targetMode === 'move') return active(game.battle).team === 'ally' ? '' : turnName(active(game.battle)) + '回合'
   if (touch && targetMode === 'summon') return pendingSummon
-    ? '點紫色空地配置。也可按住拖曳，鬆手放置。' : '選精靈，點空地配置。排好後按「召喚」。'
+    ? '點紫色空地，或拖曳後鬆手放置。' : '選精靈並配置落點。'
   if (targetMode === 'move') return moveHistory.length ? '短按右鍵可走回上一步，並退回那一步的移動距離。' :
     '點青色地面移動，點可命中的敵人普攻。金色路線會引發借機攻擊。'
   if (targetMode === 'summon') return pendingSummon ? '點藍紫色範圍內的空地。短按右鍵取消這次選擇。' : '選精靈、點落點。可一次配置多隻。'
@@ -471,7 +497,8 @@ function renderModal() {
     title = titleOf(unit) + '的狀態'
     body = card(unit) + '<div class="guide"><p>攻擊 ' + stat(unit, 'attack') + '　／　防禦 ' + stat(unit, 'defense') + '　／　命中加值 ' + stat(unit, 'aim') + '</p>' +
       (Object.keys(unit.statuses).length ? Object.entries(unit.statuses).map(([key, n]) => '<p>' + status[key].name + '　剩餘 ' + n + ' 回合</p>').join('') :
-        '<p>沒有異常狀態。</p>') + '</div>'
+      '<p>沒有異常狀態。</p>') + (touchLayout.matches
+        ? '<h3>最近行動</h3>' + recentEvents(game.battle).map(event => '<p>' + event.text + '</p>').join('') : '') + '</div>'
   }
   if (modal === 'result') {
     const victory = game.battle.result === 'victory'
@@ -523,7 +550,7 @@ function projectTags(renderer) {
     if (!pivot && !node) continue
     const at = renderer.project(pivot ?? node, node ? .38 : u.kind === 'hero' || u.kind === 'rival' ? 2.65 : u.evolved ? 2.85 : 2.05)
     const visible = at.show && body?.visible !== false && (!touchLayout.matches ||
-      (at.y >= 48 && at.y <= renderer.height && at.x >= 43 && at.x <= renderer.width - 43))
+      (at.y >= touchHudTop + 38 && at.y <= renderer.height - touchHudBottom && at.x >= 43 && at.x <= renderer.width - 43))
     const x = at.x + (renderer.offset?.x ?? 0)
     const y = at.y + (renderer.offset?.y ?? 0)
     if (visible) {
@@ -792,6 +819,7 @@ async function playerAct(command) {
   const previous = new Set(game.battle.events)
   const result = act(game, command)
   if (!result.ok) { notify(result.problem); return }
+  if (command.type === 'end') touchCommands = false
   const undoable = checkpoint && reversibleMove(game.battle, checkpoint, result)
   if (undoable) moveHistory.push(undoable)
   else moveHistory = []
@@ -840,6 +868,7 @@ async function undoMovement() {
 function chooseAlly(id) {
   const before = game.battle.active
   if (!selectAlly(game.battle, id)) return false
+  touchCommands = true
   if (game.battle.active !== before) moveHistory = []
   hoverRouter = null
   targetMode = 'move'
@@ -925,6 +954,11 @@ function cancelInteraction() {
     void undoMovement()
     return true
   }
+  if (scene === 'battle' && touchLayout.matches && touchCommands) {
+    touchCommands = false
+    render()
+    return true
+  }
   if (scene === 'inspect') {
     backToCollection()
     return true
@@ -965,6 +999,7 @@ app.addEventListener('click', event => {
     dialog.querySelector('button, input')?.focus()
   }
   if (code === 'close') cancelInteraction()
+  if (code === 'commands') { touchCommands = !touchCommands; render() }
   if (code === 'camera-out') stage.zoomCamera(1.24)
   if (code === 'camera-in') stage.zoomCamera(1 / 1.24)
   if (code === 'camera-reset') stage.resetCamera()
@@ -1093,5 +1128,5 @@ dialog.addEventListener('click', event => {
 })
 
 touchLayout.addEventListener('change', render)
-window.addEventListener('resize', positionTouchStage)
+window.addEventListener('resize', measureTouchHud)
 render()
