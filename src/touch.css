@@ -1,0 +1,291 @@
+.touch-layout {
+  --touch-left: max(16px, env(safe-area-inset-left));
+  --touch-right: max(16px, env(safe-area-inset-right));
+  --touch-top: max(8px, env(safe-area-inset-top));
+  --touch-bottom: max(8px, env(safe-area-inset-bottom));
+  --hud-shadow: 0 1px 3px #020b08, 0 1px 9px #020b08;
+  position: relative;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  -webkit-text-size-adjust: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.touch-layout button {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-layout #ui { z-index: 2 }
+.touch-layout #tags { z-index: 1; contain: paint }
+.touch-layout .overlay { text-shadow: var(--hud-shadow) }
+.touch-layout .battle-screen::after { background: linear-gradient(#07120ec9, transparent 12% 76%, #07120ef2) }
+.touch-layout .world-screen::after { background: linear-gradient(#07120ec9, transparent 13% 80%, #07120ef2) }
+.touch-layout .character-screen::after { opacity: .72 }
+.touch-layout .topbar { left: var(--touch-left); right: var(--touch-right); top: var(--touch-top); gap: 10px }
+.touch-layout .top-right { flex-shrink: 0; gap: 4px }
+.touch-layout .subtle { padding-inline: 8px; font-size: 14px }
+.touch-layout .title-footer { left: var(--touch-left); right: var(--touch-right); bottom: var(--touch-bottom) }
+.touch-layout .title-nav { gap: 5px; width: min(310px, 100%) }
+.touch-layout .title-content { margin-top: 0 }
+.touch-layout .title-nav .menu-entry:not(.primary) { background: transparent; border-color: transparent; padding-inline: 6px; text-shadow: var(--hud-shadow) }
+
+.touch-layout .overlay :where(button:not(.primary)), .touch-layout #tags :where(.tag button) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  text-shadow: var(--hud-shadow);
+}
+
+.touch-layout .overlay button:active:not(:disabled), .touch-layout #tags :where(.tag button:active:not(:disabled)) {
+  color: var(--gold-light);
+  background: #101e1d80;
+}
+
+.touch-camera {
+  position: absolute;
+  right: var(--touch-right);
+  top: var(--hud-top, 54px);
+  display: flex;
+}
+.touch-camera button { font-size: 22px; padding: 0; color: #eadbbc }
+.touch-layout .character-screen .touch-camera { top: auto; bottom: var(--touch-bottom) }
+
+.touch-layout .character-copy { left: max(var(--touch-left), 7vw); max-width: 32vw; top: 49% }
+.touch-layout .character-copy p { font-size: 15px }
+.touch-layout .character-copy h1 { font-size: clamp(42px, 6.6vw, 90px) }
+.touch-layout .character-copy .starter-elements { gap: 10px }
+.touch-layout .character-copy .starter-elements .element { font-size: 17px }
+
+.touch-layout .world-name, .touch-layout .round { font-size: clamp(15px, 1.9vw, 21px); white-space: nowrap }
+.touch-layout .map-footer { display: none }
+.touch-layout .world-dock {
+  position: absolute;
+  bottom: var(--touch-bottom);
+  left: var(--touch-left);
+  right: var(--touch-right);
+  display: grid;
+  gap: 0;
+}
+.touch-layout .world-card {
+  position: static;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.touch-layout .world-card .eyebrow { display: none }
+.touch-layout .world-card h2 { flex-shrink: 0; margin: 0; font-size: 16px }
+.touch-layout .world-card p { text-wrap: pretty; line-height: 1.3 }
+.touch-layout .world-card .full {
+  flex-shrink: 0;
+  width: auto;
+  margin: 0;
+  padding: 0 8px;
+  color: var(--gold-light);
+  background: transparent;
+  border-color: transparent;
+  text-shadow: var(--hud-shadow);
+}
+.waypoints-list {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 5px;
+  overflow-x: auto;
+  touch-action: pan-x;
+  pointer-events: auto;
+}
+.waypoints-list button, .touch-layout .waypoint button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.waypoints-list button { touch-action: pan-x }
+.touch-layout .waypoint .waypoint-icon, .touch-layout .waypoints-list .waypoint-icon {
+  width: auto;
+  height: auto;
+  border: 0;
+  color: inherit;
+}
+.touch-layout .world-dock .selected, .touch-layout .waypoint .selected { color: var(--gold-light) }
+
+.touch-layout .battle-screen .topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+.touch-layout .battle-screen .eyebrow { font-size: 10px; letter-spacing: .12em; white-space: nowrap }
+.touch-layout .initiative {
+  justify-content: start;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  touch-action: pan-x;
+  max-width: none;
+}
+.touch-layout .initiative-unit {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  touch-action: pan-x;
+}
+.touch-layout .initiative-unit.current, .touch-layout .initiative-unit[data-do="unit"] {
+  color: var(--gold-light);
+  border-bottom-color: var(--gold);
+}
+.touch-layout .initiative-unit > span + span { display: grid; justify-items: start }
+.touch-layout .initiative-unit small, .touch-layout .unit-title small { color: var(--gold-light); font-size: 11px }
+.touch-layout .battle-footer {
+  display: grid;
+  gap: 0;
+  left: var(--touch-left);
+  right: var(--touch-right);
+  bottom: var(--touch-bottom);
+  grid-template-columns: minmax(0, 1fr);
+}
+.touch-layout .battle-strip, .touch-layout .battle-strip-actions { display: flex; align-items: center; gap: 4px }
+.touch-layout .battle-strip { justify-content: space-between; flex-wrap: wrap }
+.touch-layout .battle-strip-actions { margin-left: auto }
+.touch-layout .compact-status, .touch-layout .combat-actions {
+  width: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0;
+}
+.touch-layout .compact-status { gap: 3px 8px; padding: 0 5px; text-align: start; font-size: 13px; color: #e5e5d5 }
+.touch-layout .compact-status strong { font-size: 14px }
+.touch-layout .compact-status:disabled { opacity: .85 }
+.touch-layout .combat-actions { justify-content: end; gap: 0; border: 0; background: transparent }
+.touch-layout .combat-actions .action, .touch-layout .battle-strip .action {
+  min-height: 44px;
+  padding: 4px 8px;
+  font-size: clamp(13px, 1.55vw, 16px);
+}
+.touch-layout .combat-actions .selected, .touch-layout .summon-dock .selected {
+  color: var(--gold-light);
+  border-bottom-color: var(--gold);
+}
+.touch-layout .action.wait-turn, .touch-layout .action.command-toggle, .touch-layout .action.move-back { color: var(--gold-light) }
+.touch-layout .battle-caption {
+  justify-self: end;
+  max-height: 3em;
+  overflow: auto;
+  pointer-events: auto;
+  touch-action: pan-y;
+  padding: 0 6px;
+  line-height: 1.42;
+  font-size: 13px;
+}
+.touch-layout .battle-caption:empty { display: none }
+.touch-layout .unit-tag button { min-width: 75px; padding: 4px 6px; font-size: 12px }
+.touch-layout .unit-tag.active .unit-title { color: var(--gold-light) }
+.touch-layout.placing-summon .unit-tag button { pointer-events: none }
+.touch-layout .tiny-hp { height: 2px; margin-inline: auto; min-width: 32px; width: 70%; }
+
+.touch-layout .summon-dock {
+  position: static;
+  display: grid;
+  width: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  pointer-events: none;
+}
+.touch-layout .summon-dock .inventory-rows {
+  display: flex;
+  overflow-x: auto;
+  gap: 3px;
+  pointer-events: auto;
+  touch-action: pan-x;
+}
+.touch-layout .summon-dock .dialog-row {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 44px;
+  font-size: 13px;
+  gap: 5px;
+  touch-action: pan-x;
+}
+.touch-layout .summon-dock .planned { color: #c4c0ff }
+.touch-layout .summon-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.touch-layout .summon-dock .plan-summary { margin-right: auto; align-items: center; gap: 8px; font-size: 13px }
+.touch-layout .summon-dock .plan-warning { font-size: 12px }
+.touch-layout .summon-dock .full {
+  margin: 0;
+  width: auto;
+  border-color: transparent;
+  background: transparent;
+  color: var(--gold-light);
+  text-shadow: var(--hud-shadow);
+}
+
+.touch-layout .modal-shade { padding: var(--touch-top) var(--touch-right) var(--touch-bottom) var(--touch-left) }
+.touch-layout .dialog-panel {
+  width: min(100%, 520px);
+  max-height: min(calc(100dvh - var(--touch-top) - var(--touch-bottom)), 720px);
+  border: 0;
+  box-shadow: none;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  font-size: 16px;
+}
+.touch-layout .dialog-panel header { position: sticky; top: -1px; background: #152321; z-index: 1 }
+.touch-layout .dialog-panel .dialog-row, .touch-layout .setting {
+  min-height: 48px;
+  font-size: 14px;
+  background: transparent;
+  border-width: 0 0 1px;
+}
+.touch-layout .dialog-panel .dialog-row small, .touch-layout .guide p { font-size: 13px }
+.touch-layout .setting input[type="checkbox"] { width: 24px; height: 24px }
+.touch-layout .setting input[type="range"] { min-height: 44px; width: min(45%, 230px) }
+
+@media (orientation: portrait) {
+  .touch-layout .character-copy {
+    top: auto;
+    transform: none;
+    bottom: calc(var(--touch-bottom) + 38px);
+    left: var(--touch-left);
+    right: var(--touch-right);
+    max-width: none;
+  }
+  .touch-layout .character-copy h1 { font-size: clamp(35px, 7vw, 70px); margin: 4px 0 }
+  .touch-layout .character-copy .character-class { margin-bottom: 6px }
+  .touch-layout .character-copy .character-stats { margin: 10px 0 }
+}
+
+@media (max-height: 540px) {
+  .touch-layout .title-footer { display: none }
+  .touch-layout .world-card p { display: none }
+}
+
+@media (max-width: 680px) {
+  .touch-layout { --touch-left: max(8px, env(safe-area-inset-left)); --touch-right: max(8px, env(safe-area-inset-right)); }
+  .touch-layout .topbar { gap: 4px }
+  .touch-layout .subtle { padding-inline: 5px; font-size: 12px }
+  .touch-layout .world-card p { display: none }
+  .touch-layout .initiative-unit > span + span { display: none }
+  .touch-layout .initiative-unit { justify-content: center }
+  .touch-layout .battle-caption { font-size: 12px }
+}

@@ -1,1 +1,41 @@
 # 精靈幻境 2026
+
+繁體中文 3D 無網格戰術 RPG，使用 Three.js、Blender 模型及 Effekseer 即時特效。
+
+- [直接試玩](https://a1593711534-droid.github.io/Fairyland-2026/)
+- [新版需求逐條驗收](docs/v1-audit.md)
+- [莉歐與六屬精靈 2D 設定圖](docs/concept-art/)
+
+## 遊玩
+
+1. 點「新遊戲」會先進角色選擇。確認莉歐後從月泉營地出發。點微光林地可直接進場測試戰鬥、收服及練等。
+2. 戰鬥指令固定顯示在下方。點可達地面移動，點射程內的敵人普攻。短按右鍵或點畫面上的「取消」「復原移動」可退出瞄準或撤回安全移動。借機攻擊結算後該步會鎖定。
+3. 莉歐開局已有六種精靈。召喚時在同一面板選精靈、點空地，可放置多隻後一次提交。低於 5 點魔力時，仍在場的夥伴會變回野生。
+4. 打倒練習精靈快速取得經驗。Lv. 3 後回大地圖，打開精靈手冊進化。
+5. 各角色有三格物品欄。可到蘑菇小攤購買消耗品、裝備和特殊道具。月泉可治療隊伍。
+
+遊戲需要 WebGL 2。自動存檔和三個手動欄位保存在目前瀏覽器。
+
+### iPad 觸控
+
+- 大地圖與戰場滿版顯示。地圖下方可直接選地點。點我方模型、先攻列中的我方角色，或右下角「指令」即可展開戰鬥指令。底端角色狀態可開啟詳細狀態與最近行動。
+- 攻擊或收服時，可直接點模型、場上名稱或先攻列中可用的目標。
+- 戰場上單指拖曳平移，雙指可平移、縮放與旋轉。鏡頭按鈕可放大、縮小或重設。選角色與精靈手冊可單指拖曳旋轉模型。
+- 範圍技能與召喚可以點地面，也可按住拖曳預覽並在鬆手後施放或放置。加上第二指可中止這次瞄準並接著操作鏡頭。橫直轉換會保留鏡頭與已配置的召喚位置。
+- 長時間遊玩可在設定開啟「省電模式」，將繪圖頻率目標設成 30 FPS。
+
+## 開發
+
+需要 Node.js 24。使用 `npm ci` 安裝，`npm run dev` 開發，`npm test` 驗證，`npm run build` 取得 `dist/`。正式站由 GitHub Actions 部署。
+
+`src/game/content.js` 集中管理內容和主要平衡參數。`combat.js`、`summoning.js`、`inventory.js`、`ai.js`、`world.js` 及 `save.js` 處理相應規則。`src/interface.js` 定義共用面板，`src/render/` 處理 3D、特效和音訊。
+
+### 美術素材
+
+- 安裝 Blender 4.3 後，以 `npm run art` 重建模型及動畫。設定 `FAIRYLAND_INSTANT_MESHES` 為 Instant Meshes 執行檔的路徑，可重建精靈的重拓撲版本。莉歐的頭部以 MPFB 2.0.18 的 CC0 基礎網格為起點，已裁切並納入 `tools/reference/lio-head.obj`。
+- 安裝 Python 的 NumPy 與 Pillow 後，執行 `python tools/create-surface-maps.py /path/to/Rock030` 重建材質。路徑需包含解壓後的 1K JPG 素材。石材採用 [ambientCG Rock030](https://ambientcg.com/view?id=Rock030)，授權為 CC0。
+- 執行 `python tools/foliage-atlas.py` 產生樹冠的透明葉簇貼圖。
+- 現行六屬演出由 `src/render/elemental-effects.js` 繪製，火屬召喚另外使用 `src/render/fire-summon.js`，兩者共用可重複取樣的流場紋理。較早的 Effekseer 檔案可用 `python tools/author-effects.py /path/to/Effekseer` 重建，授權見 [Effekseer 授權](public/art/fx/effekseer-LICENSE.txt)。
+- `tools/idle_behaviors.py` 製作各物種的待機姿態和踏步轉身，`src/render/attention.js` 依位置與視線選擇注視方向。夥伴、移動、施法和命中都能改變注意力，再由物種的反應速度與姿態決定什麼時候轉頭或踏步轉向。
+- 我方召喚精靈與野生精靈會追蹤可見的威脅。靠近、橫移和命中會改變注意力，精靈可維持注視、側耳、戒備或放鬆半步。較遠的背後威脅以肩頸回看，急迫的威脅可用單次快速轉身直接朝向目標。受擊後會優先看向出手者，並保留其他攻擊者的記憶。仇恨用於注視和姿態演出。
+- 鳥系和龍系有專用的左右後看動畫。背後較遠的威脅可引發頭與頸依序扭轉，腳留在原位。威脅沒有移動時，較長的觀察停頓也會出現。快速接近或受擊仍可觸發立即的注意力變化。
