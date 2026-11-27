@@ -70,51 +70,55 @@ test('summoned allies ignore the summoner and use guard and retaliation toward h
   assert.equal(defense.display, true)
 })
 
-test('a summoned ally checks threats on both sides and repeatedly returns to its primary', () => {
+test('a moving hostile breaks a settled guard without requiring a return to the main target', () => {
   const actor = unit('actor', 'ally', -8, -1)
   const front = unit('front', 'wild', -6.5, -1)
-  const rear = unit('rear', 'enemy', -11.2, -1)
-  const flank = unit('flank', 'enemy', -8, 1.2)
+  const rear = unit('rear', 'enemy', -13.2, -1)
+  const flank = unit('flank', 'enemy', -8, 3.1)
   const friendly = unit('friendly', 'ally', -8, -.5)
   const fight = new Map([actor, front, rear, flank, friendly].map(item => [item.id, item]))
-  const focus = new Vigilance('dog', () => .2)
-  const seen = new Map()
-  let returns = 0
-  let before
-  for (let t = 0; t < 12; t += .1) {
-    const current = focus.update(actor, fight, t)
-    assert.equal(current.primary, front.id)
-    assert.equal(current.multi, true)
-    if (current.id !== before && current.id === front.id) returns++
-    before = current.id
-    seen.set(current.id, current.step)
-  }
-  assert.ok(returns >= 3)
-  assert.equal(seen.has(friendly.id), false)
-  assert.equal(seen.get(rear.id), true)
-  assert.equal(seen.has(flank.id), true)
+  const focus = new Vigilance('dog', () => .42)
+  assert.equal(focus.update(actor, fight, 0).id, front.id)
+  const frontTicket = focus.state.ticket
+  focus.update(actor, fight, .3)
+  rear.pivot.position.x = -10
+  const rearward = focus.update(actor, fight, .39)
+  assert.equal(rearward.id, rear.id)
+  assert.equal(rearward.step, true)
+  assert.equal(rearward.fast, true)
+  assert.equal(rearward.reaction, 'brace')
+  assert.notEqual(rearward.ticket, frontTicket)
+  flank.pivot.position.z = 1.5
+  assert.equal(focus.update(actor, fight, .81).id, flank.id)
 })
 
-test('provoked focus remembers both attackers, and a distant rear watch uses a glance', () => {
+test('static threats do not force a primary-secondary rhythm and both attackers remain in memory', () => {
   const actor = unit('actor', 'wild', -6, -1)
-  const front = unit('front', 'ally', -4.0, -1)
+  const front = unit('front', 'ally', -4, -1)
   const rear = unit('rear', 'ally', -11.8, -1)
   const fight = new Map([actor, front, rear].map(item => [item.id, item]))
-  const focus = new Vigilance('dog', () => .2)
-  assert.equal(focus.update(actor, fight, 0).id, 'front')
-  const initialRear = focus.update(actor, fight, .8)
-  assert.equal(initialRear.id, 'rear')
-  assert.equal(initialRear.step, false)
-  focus.attacked(actor, rear, 1)
-  focus.attacked(actor, front, 1.2)
-  assert.equal(focus.update(actor, fight, 1.21).id, 'front')
+  let seed = 921
+  const focus = new Vigilance('dog', () => (seed = (Math.imul(1664525, seed) + 1013904223) >>> 0) / 2 ** 32)
+  const changes = []
+  let lastId
+  let glanced
+  for (let t = 0; t < 17; t += .11) {
+    const state = focus.update(actor, fight, t)
+    if (state.id !== lastId) {
+      changes.push(t)
+      lastId = state.id
+    }
+    if (state.id === rear.id) glanced ??= state.step
+  }
+  assert.equal(glanced, false)
+  const timing = changes.slice(1).map((t, i) => Math.round((t - changes[i]) * 10))
+  assert.ok(new Set(timing).size >= 2)
+  focus.attacked(actor, rear, 17)
+  assert.equal(focus.update(actor, fight, 17.01).id, 'rear')
+  focus.attacked(actor, front, 17.3)
+  assert.equal(focus.update(actor, fight, 17.31).id, 'front')
   focus.consumeDisplay('front')
-  const next = focus.update(actor, fight, 2.32)
-  assert.equal(next.mode, 'provoked')
-  assert.equal(next.primary, 'front')
-  assert.equal(next.id, 'rear')
-  assert.equal(next.step, true)
-  assert.equal(next.display, true)
+  assert.equal(focus.attacks.get('rear').display, true)
   rear.dead = true
-  assert.equal(focus.update(actor, fight, 2.4).multi, false)
+  assert.equal(focus.update(actor, fight, 17.42).multi, false)
 })

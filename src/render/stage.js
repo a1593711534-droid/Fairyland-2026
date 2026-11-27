@@ -503,15 +503,15 @@ export class Stage {
           notice.end = Math.max(notice.end, this.clock + 1.62)
         }
         const direction = Math.sign(angle)
-        const rear = focus?.multi && Math.abs(angle) > 2.26
         const suffix = direction > 0 ? 'right' : 'left'
-        const wide = 'turn_rear_' + suffix
-        const name = rear && unit.actions.has(wide) ? wide : 'turn_' + suffix
+        const quick = 'turn_pivot_' + suffix
+        const pivot = Math.abs(angle) > TURN_ANGLE && unit.actions.has(quick)
+        const name = pivot ? quick : 'turn_' + suffix
         if (unit.actions.has(name)) {
           unit.headingGoal = null
-          const sweep = name === wide ? Math.PI * .79 : TURN_ANGLE
-          unit.stepTurn = { started: unit.pivot.rotation.y, angle: direction * Math.min(sweep, Math.abs(angle)) }
-          this.play(unit.id, name)
+          unit.stepTurn = { started: unit.pivot.rotation.y, angle }
+          const speed = focus?.fast ? 1.10 + unit.idle.sample() * .18 : .94 + unit.idle.sample() * .19
+          this.play(unit.id, name, true, false, speed)
         }
       }
     } else if (notice && this.clock >= notice.end) {
@@ -567,7 +567,12 @@ export class Stage {
         focus.display = false
         const show = focus.multi && unit.actions.has('threat_display_wide') ? 'threat_display_wide' : 'threat_display'
         this.play(unit.id, show)
-      } else if (current !== watch && unit.actions.has(watch)) this.play(unit.id, watch, false)
+      } else if (focus.ticket !== unit.reactionTicket && unit.actions.has('guard_react_' + focus.reaction)) {
+        unit.reactionTicket = focus.ticket
+        this.play(unit.id, 'guard_react_' + focus.reaction, true, false, .94 + unit.idle.sample() * .24)
+      } else if (!current.startsWith('guard_react_') && current !== watch && unit.actions.has(watch)) {
+        this.play(unit.id, watch, false)
+      }
       return
     }
     if (current.startsWith('guard')) {

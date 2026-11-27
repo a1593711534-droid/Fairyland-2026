@@ -362,7 +362,7 @@ def shell_layers(height, evolved, frame_mat, plastron_mat):
     rim = loft('Continuous carapace lip',edge,frame_mat,10,.018)
     uv_project(rim,.76)
     lower = ovoid('Warm curved plastron beneath shell',(0,.13,height*.83),
-                  (width*.92,depth*.92,.235+.08*evolved),plastron_mat, .0,.042,19,40)
+                  (width*.89,depth*.91,.194+.079*evolved),plastron_mat, .0,.042,19,40)
     uv_project(lower,.73)
     return rim,lower
 
@@ -429,7 +429,7 @@ def scute_armor(height, evolved, mat):
                 radial = min(.999,math.hypot(u,v))
                 z = height+.10+(.52+.14*evolved)*(1-radial**2)**.69
                 z -= .105*soft(.88,1,radial)
-                z += .061+(.082+.04*evolved)*math.sin(math.pi*r*.78) - .016*math.sin(angle*3)*r
+                z += .054+(.113+.047*evolved)*math.sin(math.pi*r*.83) - .016*math.sin(angle*3)*r
                 z += .040*evolved*r*r*max(0,dy)
                 coords.append((u*width,v*depth+.13,z))
                 if i:
@@ -444,7 +444,12 @@ def scute_armor(height, evolved, mat):
         root = blend((.032,.090,.099),(.075,.268,.254),soft(.19,.72,field)*.83)
         mineral = blend((.14,.31,.275),(.306,.343,.154),soft(-.55,.50,p))
         return blend(root,mineral,soft(.58,.77,field+p*.32)*.85)
-    pigment(plates,mat,color)
+    def rim_color(v):
+        u,vv = v.x/width,(v.y-.13)/depth
+        r=math.hypot(u,vv)
+        ring=soft(.71,1,r)*soft(-.15,.5,noise.fractal(v*11.6,.84,2,2))
+        return blend(color(v),(.31,.38,.22),ring*.42)
+    pigment(plates,mat,rim_color)
     return plates
 
 
@@ -530,8 +535,8 @@ def skeleton(name, height, hind_y, front_y, span, bird=False, person=False, anat
 
     chest = anatomy[0] if anatomy else height * (.52 if not person else .60)
     bone('Body', (0, 0, chest), (0, 0, chest+.35))
-    heady,headz = (anatomy[1]+.10,anatomy[2]-.105) if anatomy else (-.36,height*.72)
-    bone('Head', (0,heady,headz), (0,heady,headz+.28 if anatomy else height*.92), 'Body')
+    heady,headz = (.023,2.064) if person else (anatomy[1]+.10,anatomy[2]-.105)
+    bone('Head', (0,heady,headz), (0,heady,headz+.28), 'Body')
     if name in ('dino','bird'):
         bone('Jaw',(0,heady-.22,headz+.033),(0,heady-.48,headz-.007),'Head')
     bone('Tail', (0, .58, chest*.93), (0, 1.12, chest), 'Body')
@@ -573,12 +578,15 @@ def animate(rig, style):
     }
     specs.update({name: (frames, False) for name, frames in CLIPS[style].items()})
     specs.update({name: (TURN_FRAMES[style], False) for name in ('turn_left','turn_right')})
+    duration = {'hero':21,'turtle':24,'dog':17,'cat':16,'dino':22,'bird':13,'mouse':12}[style]
+    specs.update({name: (duration, False) for name in ('turn_pivot_left','turn_pivot_right')})
     if style in THREAT_FRAMES:
         specs.update({'guard': (90, True), 'guard_alert': (61, True),
                       'threat_display': (THREAT_FRAMES[style], False),
                       'threat_display_wide': (THREAT_FRAMES[style], False),
                       'turn_rear_left': (TURN_FRAMES[style]+10, False),
                       'turn_rear_right': (TURN_FRAMES[style]+10, False)})
+        specs.update({'guard_react_listen': (32,False), 'guard_react_brace': (29,False), 'guard_react_settle': (46,False)})
     scene = bpy.context.scene
     scene.render.fps = 30
     bird = style == 'bird'
@@ -746,7 +754,7 @@ def animal(kind, evolved):
     skull_depth = {'turtle':1.13,'dino':1.42,'cat':1.05,'bird':1.08,'mouse':1.08,'dog':1.13}[kind]
     skull_height = {'turtle':.77,'dino':.67,'cat':.86,'bird':.91,'mouse':.95,'dog':.86}[kind]
     barrel = {'dino':.59,'dog':.83,'cat':.74,'bird':.82,'mouse':1.16}.get(kind,1)
-    hip_height = .91 if kind=='dino' else .96 if kind=='dog' else 1.04
+    hip_height = .91 if kind=='dino' else 1 if kind=='dog' else 1.04
     parts.extend([loft('Chest, barrel and haunch line', [((0,-bodylength*.77,chest*.98),width*.55,chest*.33),
                     ((0,-bodylength*.35,chest*.99),width*.97,chest*.56*barrel),
                     ((0,bodylength*.22,chest*.97),width*.79,chest*.46*barrel),
@@ -754,7 +762,7 @@ def animal(kind, evolved):
                     ((0,bodylength*1.02,chest*.96),width*.25,chest*.19)],skinmat,28,.012,steps=5),
                   ell('Cranial anatomy', (0,heady,headz), (headw,headw*skull_depth,headw*skull_height)),
                   ell('Neck', (0,heady*.68,(chest+headz)*.53), (width*.68, width*.82, abs(headz-chest)*.53+.17))])
-    muzzle_depth = {'turtle':.105,'dino':.37,'cat':.122,'mouse':.124,'dog':.284,'bird':.18}[kind]
+    muzzle_depth = {'turtle':.105,'dino':.412,'cat':.124,'mouse':.124,'dog':.284,'bird':.18}[kind]
     muzzle_y = heady-headw*.82
     muzzle_z = headz-headw*(.22 if kind in ('dino','dog') else .27)
     if kind=='turtle':
@@ -763,7 +771,7 @@ def animal(kind, evolved):
             ((0,heady+.022,headz+.008),.173,.153)],skinmat,24,.022,steps=5))
     if kind=='dino':
         parts.append(loft('Curved drake throat', [((0,-.36,chest+.08),.26,.26),
-            ((0,-.55,chest+.36),.224,.215),((0,-.63,headz-.20),.177,.163),
+            ((0,-.57,chest+.39),.203,.209),((0,-.66,headz-.20),.158,.159),
             ((0,heady+.03,headz-.02),.212,.155)],skinmat,26,.021,steps=4))
     if kind != 'bird':
         parts.append(loft('Continuous muzzle and jaw', [((0,heady-headw*.38,muzzle_z+.026),headw*.74,headw*.52),
@@ -1035,9 +1043,9 @@ def animal(kind, evolved):
             contour = band * soft(.11,.46,v.z) * soft(.065,.21,abs(v.x))
             face = soft(.77,.96,-v.y)*soft(headz+.015,headz+.116,v.z)
             contour = max(contour,face*soft(.24,.80,math.sin(abs(v.x)*43+.70)))
-            style = blend(style,(.036,.051,.025),contour*(.93+.04*E))
+            style = blend(style,(.027,.030,.019),contour*(.96+.03*E))
             moss = soft(.12,.59,math.sin(phase-.98))*(1-band)*soft(chest*.80,chest*1.06,v.z)
-            style = blend(style,(.31,.34,.073),moss*(.66+.13*E))
+            style = blend(style,(.31,.34,.073),moss*(.74+.17*E))
             style = blend(style,accent,max(muzzle,belly*.91,1-soft(.17,.31,v.z))*.70)
             style = blend(style,(.058,.047,.043),soft(1.22,1.60,v.y)*.92)
         if kind=='mouse':
@@ -1135,31 +1143,41 @@ def animal(kind, evolved):
                         ('Paw'+bone,strength*paw),('Body',1-strength)]
         return [(bone,strength),('Body',1-strength)]
     skin(body,rig,body_weights)
-    if kind in ('dog','cat','bird'):
+    if kind in ('dog','cat','bird','mouse'):
         rng = random.Random(1709+len(kind)*71+E)
         samples = []
-        for i in range(5 if kind=='dog' else 4):
+        for i in range({'dog':5,'cat':5,'bird':6,'mouse':0}[kind]):
             y = (front_y if kind!='bird' else -.25) + i*.125
             for j in range(9 if kind!='bird' else 7):
                 a=(j-(3 if kind=='bird' else 4))*.34+i*.065
                 n=(math.sin(a),0,math.cos(a))
                 central=(0,y+rng.uniform(-.038,.038),chest*.96)
                 if kind=='bird':
-                    central=(math.sin(a)*.11,-.56+i*.033,chest+.25-i*.125)
+                    central=(math.sin(a)*.11,-.56+i*.033,chest+.34-i*.114)
                     n=(math.sin(a)*.38,-.88,.08)
                 flow=(math.sin(a)*.48,.84 if kind!='bird' else .12,-.83+math.cos(a)*.58)
-                width={'cat':.050,'bird':.054,'dog':.085}[kind]
-                length={'dog':.28,'cat':.219,'bird':.147}[kind]
+                width={'cat':.050,'bird':.059,'dog':.079}[kind]
+                length={'dog':.28,'cat':.219,'bird':.181}[kind]
                 color = lightmat.diffuse_color[:3] if kind=='bird' else coat(Vector((n[0]*.32,y,chest+n[2]*.30)))
                 samples.append((central,n,flow,length*rng.uniform(.77,1.22),width*rng.uniform(.71,1.21),color))
-        if kind=='dog':
-            for i in range(4):
+        if kind in ('dog','cat','mouse'):
+            for i in range(3 if kind=='dog' else 2):
                 for j in range(5):
                     u=(j-2)*.52
-                    central=(u*.29,front_y,chest+.37-i*.13)
+                    central=(u*.20,front_y,chest+(.34 if kind!='mouse' else .20)-i*.13)
                     drift=(u*.26,.01,-.91)
                     light=blend(lightmat.diffuse_color[:3],skinmat.diffuse_color[:3],abs(u)*.34)
-                    samples.append((central,(u*.69,-.92,.21),drift,.32+i*.016+.044*E,.064+.010*E,light))
+                    length={'dog':.305,'cat':.245,'mouse':.118}[kind]
+                    samples.append((central,(u*.69,-.92,.21),drift,length+i*.016+.032*E,.053+.009*E,light))
+        if kind=='dog':
+            for row in range(4):
+                for side in (-1,1):
+                    for level in (-1,0,1):
+                        anchor=(.11,tailend*(.76-.057*row),chest+.44+.143*row)
+                        outward=(side*.78,.31,level*.83)
+                        flow=(side*.25,-.88,.37-level*.15)
+                        tip=blend(skinmat.diffuse_color[:3],lightmat.diffuse_color[:3],.15+.24*row)
+                        samples.append((anchor,outward,flow,.27+.055*row+.09*E,.061+.010*E,tip))
         cheeks = []
         if kind!='bird':
             for side in (-1,1):
@@ -1168,7 +1186,7 @@ def animal(kind, evolved):
                     n=(side*.91,-.36,-.11-i*.065)
                     source=(side*headw*.43,heady+.062+i*.021,z)
                     tone=blend(skinmat.diffuse_color[:3],lightmat.diffuse_color[:3],.44+i*.13)
-                    length = (.155+i*.025)*(1.38 if kind=='dog' else 1.14)
+                    length = (.155+i*.025)*{'dog':1.47,'cat':1.24,'mouse':.60}[kind]
                     cheeks.append((source,n,(side*.55,.43,-.78-i*.06),length*(1+.20*E),.055,tone))
         def hair_color(tint,t,s):
             f=.80+.19*soft(.04,.79,t)+.065*(1-abs(s))
@@ -1211,8 +1229,8 @@ def person():
          ((0,.028,1.52),.242,.174),((0,.004,1.68),.271,.198),
          ((0,.028,1.815),.303,.193),((0,.042,1.924),.244,.148),((0,.043,2.011),.136,.114)],
          cloth,sides=42)
-    tube('Standing pine-wool collar', [((0,.041,1.927),.155,.123),
-         ((0,.046,1.998),.144,.118),((0,.046,2.061),.132,.103)],cloth,sides=36)
+    tube('Standing pine-wool collar', [((0,.041,1.927),.154,.119),
+         ((0,.046,1.991),.146,.115),((0,.040,2.057),.133,.103)],cloth,sides=36)
     tube('Cloth-bound collar edge', [((0,.045,2.035),.137,.106),
          ((0,.046,2.059),.133,.103)],stitch,sides=30)
     tube('Waist belt', [((0,.026,1.353),.277,.209),((0,.025,1.415),.268,.209)],belt,sides=34)
@@ -1340,7 +1358,7 @@ def person():
     surface = face_surface(face)
     for frame in frames:
         fix(inset_eye(surface,frame,cornea,complexion,'hero'),'Head')
-    ell('Scalp hair mass',(.003,.042,2.36),(.169,.171,.169),hair,'Head',-.08)
+    ell('Scalp hair mass',(.003,.047,2.36),(.166,.162,.164),hair,'Head',-.08)
     for side in (-1,1):
         for j in range(6):
             flow=j/5
@@ -1452,14 +1470,30 @@ def person():
         c*grain(v,94,.11)*(1+.14*math.sin(v.x*222 + v.z*45 + v.y*30))
         for c in hair.diffuse_color[:3]
     ])
+    neck = loft('Continuous throat inside collar', [((0,.043,1.916),.099,.081),
+        ((0,.038,1.988),.109,.094),((0,.026,2.051),.115,.101),((0,.018,2.132),.114,.104)],
+        skinmat,26,.008,steps=5)
+    pigment(neck,skinmat,complexion)
+    fix(neck,'Head')
     rig = skeleton('Lio',2.46,.02,.0,.19,person=True)
     def coat_skin(v):
         arm = soft(.275,.485,abs(v.x))*soft(1.13,1.37,v.z)
         return [('FrontR' if v.x>0 else 'FrontL',arm),('Body',1-arm)]
     skin(coat,rig,coat_skin)
     skin(cape,rig,lambda v: [('Tail', 1-soft(.50,1.53,v.z)),('Body',soft(.50,1.53,v.z))])
+    def neck_skin(v):
+        head = soft(1.96,2.136,v.z)
+        return [('Head',head),('Body',1-head)]
+    def braid_skin(v):
+        head = soft(1.73,2.15,v.z)
+        return [('Head',head),('Body',1-head)]
     for obj,bone in [*pinned,(hair_mesh,'Head')]:
-        skin(obj,rig,lambda v, bone=bone: [(bone,1)])
+        if obj in (face,neck):
+            skin(obj,rig,neck_skin)
+        elif obj in (hair_mesh,tie):
+            skin(obj,rig,braid_skin)
+        else:
+            skin(obj,rig,lambda v, bone=bone: [(bone,1)])
     # Fit the reference's tapered silhouette after binding, with rest bones
     # and morph coordinates receiving the exact same proportional change.
     for obj in [coat,cape,hair_mesh,*(obj for obj,_ in pinned)]:

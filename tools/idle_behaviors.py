@@ -79,9 +79,9 @@ def grounding(bones, posture, tilt, drop, shift=0, rear_step=0, front_step=0, pa
         planted_leg(bones,name,rotation,displacement,Vector((0,step*posture,lift)))
 
 
-def turn_pose(bones, species, sign, t, rear=False):
+def turn_pose(bones, species, sign, t, rear=False, pivot=False):
     """Counter-rotate planted feet against the animated root turn."""
-    nominal = (math.pi*.79 if rear else TURN_ANGLE)*sign
+    nominal = (math.pi*.77 if pivot else math.pi*.79 if rear else TURN_ANGLE)*sign
     yaw = nominal*(.48*smooth(.17,.48,t)+.52*smooth(.54,.93,t))
     untwist = Quaternion(UP,-yaw)
     head = bones['Head']
@@ -89,7 +89,8 @@ def turn_pose(bones, species, sign, t, rear=False):
     anticipation = window(0,.15,.27,.55,t)
     head.rotation_euler = (0,(.53 if rear else .32)*sign*anticipation,0)
     settle = window(.19,.29,.44,.52,t)+window(.61,.70,.83,.94,t)
-    body_shift = Vector((0,0,-.028*settle))
+    plant = window(0,.16,.46,.91,t) if pivot else 0
+    body_shift = Vector((sign*.036*plant,-.027*plant,-.028*settle-.030*plant))
     translate(body,*body_shift)
     if species in ('bird','dino','hero'):
         steps = ('BackL','BackR')
@@ -99,7 +100,7 @@ def turn_pose(bones, species, sign, t, rear=False):
         first = (name in ('FrontL','BackR')) == (sign>0)
         start,end = (.09,.51) if first else (.48,.94)
         p = smooth(start,end,t)
-        toe_lift = (.15 if species in ('bird','mouse','cat') else .106)*math.sin(math.pi*p)*(1.30 if rear else 1)
+        toe_lift = (.15 if species in ('bird','mouse','cat') else .106)*math.sin(math.pi*p)*(1.30 if rear or pivot else 1)
         foot_angle = nominal*p-yaw
         if species in ('dog','cat'):
             anchor = bones['Paw'+name].bone.head_local
@@ -179,6 +180,45 @@ def defensive_pose(bones, species, clip, t):
         tail.rotation_euler.z += .13*math.sin(t*math.tau)*ready
 
 
+def alert_reaction(bones, species, clip, t):
+    defensive_pose(bones,species,'guard',.13)
+    head,body,tail=(bones[k] for k in ('Head','Body','Tail'))
+    listen=window(0,.19,.36,.94,t)
+    brace=window(0,.15,.47,.92,t)
+    hold=window(.12,.41,.68,1,t)
+    if clip.endswith('listen'):
+        gain={'dog':.27,'cat':.20,'turtle':.16,'bird':.38,'mouse':.32,'dino':.23}[species]
+        head.rotation_euler.x -= gain*listen
+        head.rotation_euler.z += gain*.64*listen
+        tail.rotation_euler.z -= gain*.48*listen
+        if species == 'bird':
+            translate(head,z=.077*listen)
+        elif species in ('mouse','turtle'):
+            translate(head,y=-.095*listen)
+    elif clip.endswith('brace'):
+        if species in ('dog','cat'):
+            grounding(bones,brace,.13 if species=='dog' else .30,.13,-.025,.09,-.085)
+            tail.rotation_euler.x += .36*brace
+        elif species=='bird':
+            for side,sign in (('L',-1),('R',1)):
+                bend(bones['Front'+side],.12*brace,z=sign*.49*brace)
+        elif species=='turtle':
+            translate(head,y=.220*brace,z=-.083*brace)
+        elif species=='mouse':
+            translate(body,z=.063*brace)
+            bend(bones['FrontL'],-.52*brace)
+            bend(bones['FrontR'],-.42*brace)
+        elif species=='dino':
+            translate(body,y=-.076*brace)
+            bend(bones['Jaw'],.21*brace)
+        head.rotation_euler.x += .18*brace
+    else:
+        head.rotation_euler.x += .16*hold
+        tail.rotation_euler.y += .19*hold
+        if species=='bird':
+            translate(head,y=-.079*hold)
+
+
 def pose(rig, species, clip, t):
     bones = rig.pose.bones
     for bone in bones:
@@ -189,7 +229,11 @@ def pose(rig, species, clip, t):
 
     body, head, tail = (bones[key] for key in ('Body','Head','Tail'))
     if clip.startswith('turn_'):
-        turn_pose(bones,species,1 if clip.endswith('_right') else -1,t,clip.startswith('turn_rear'))
+        turn_pose(bones,species,1 if clip.endswith('_right') else -1,t,
+                  clip.startswith('turn_rear'),clip.startswith('turn_pivot'))
+        return
+    if clip.startswith('guard_react_'):
+        alert_reaction(bones,species,clip,t)
         return
     if clip.startswith(('guard','threat_display')):
         defensive_pose(bones,species,clip,t)
