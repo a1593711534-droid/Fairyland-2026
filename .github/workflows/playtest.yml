@@ -20,7 +20,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && hashFiles('package-lock.json') == ''
         uses: actions/checkout@v7
         with:
-          ref: 40ade34becb0be3a59b6fee2840d8d552b689ff4
+          ref: b86206e46e05608f108daec066cd727fa68819cf
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
