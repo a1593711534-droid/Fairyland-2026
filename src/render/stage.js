@@ -10,6 +10,7 @@ import { Vigilance } from './vigilance.js'
 import { applySurfaces, fireflies, surfaceTime } from './surfaces.js'
 import { artURL } from './art-url.js'
 import { fireSummon, warmFire } from './fire-summon.js'
+import { attachTouchControls } from './touch-controls.js'
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder)
 const library = new Map()
@@ -79,13 +80,25 @@ export class Stage {
     const gl = this.renderer.getContext()
     const debug = gl.getExtension('WEBGL_debug_renderer_info')
     this.software = debug && /swiftshader|llvmpipe|software/i.test(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL))
-    this.renderer.setPixelRatio(this.software ? 1 : Math.min(devicePixelRatio, 1.3))
+    this.touchLayout = matchMedia('(any-pointer: coarse)')
+    this.performanceScale = 1
+    this.frameLoad = 0
+    this.frameSample = 0
     this.renderer.shadowMap.enabled = !this.software
     this.renderer.shadowMap.type = T.PCFShadowMap
     this.renderer.toneMapping = T.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.18
     this.canvas = this.renderer.domElement
     this.canvas.setAttribute('aria-label', '3D 場景')
+    this.canvas.addEventListener('webglcontextlost', event => {
+      event.preventDefault()
+      this.contextLost = true
+    })
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false
+      this.last = performance.now()
+      this.layout()
+    })
     host.append(this.canvas)
 
     this.ambient = new T.HemisphereLight('#c4e5f0', '#745e42', 2.18)
@@ -146,6 +159,7 @@ export class Stage {
   setMode(mode) {
     if (mode === this.mode) return
     this.mode = mode
+    this.touch?.reset()
     if ((mode === 'world' || mode === 'battle') && !this.fireWarm) {
       this.fireWarm = true
       const idle = globalThis.requestIdleCallback ?? globalThis.requestAnimationFrame
@@ -169,14 +183,59 @@ export class Stage {
     this.clearHover()
     if (this.land) this.land.visible = ['world', 'battle'].includes(mode)
     this.scene.background.set(['choose', 'inspect'].includes(mode) ? '#162823' : '#193133')
-    this.view = { ...(presets[mode] ?? presets.world) }
+    this.resetCamera()
     this.layout()
   }
 
   layout() {
-    this.width = this.host.clientWidth || 1
-    this.height = this.host.clientHeight || 1
-    this.renderer.setSize(this.width, this.height)
+    const width = this.host.clientWidth || 1
+    const height = this.host.clientHeight || 1
+    const resized = width !== this.width || height !== this.height
+    this.width = width
+    this.height = height
+    this.offset = { x: this.host.offsetLeft, y: this.host.offsetTop }
+    const ratio = this.pixelRatio()
+    if (ratio !== this.renderer.getPixelRatio()) this.renderer.setPixelRatio(ratio)
+    if (resized) this.renderer.setSize(width, height, false)
+    this.placeCamera()
+  }
+
+  pixelRatio() {
+    if (this.software) return 1
+    if (this.batterySaver) return Math.min(devicePixelRatio, 1)
+    if (!this.touchLayout.matches) return Math.min(devicePixelRatio, 1.3)
+    const limit = Math.sqrt(1_650_000 / (this.width * this.height))
+    return Math.min(devicePixelRatio, Math.max(.82, Math.min(1.5, limit) * this.performanceScale))
+  }
+
+  setBatterySaver(active) {
+    if (this.batterySaver === active) return
+    this.batterySaver = active
+    this.performanceScale = 1
+    this.frameLoad = this.frameSample = 0
+    this.layout()
+  }
+
+  resetCamera() {
+    this.view = { ...(presets[this.mode] ?? presets.world) }
+    if (this.touchLayout.matches) {
+      if (['choose', 'inspect'].includes(this.mode)) this.view.x = .78
+      if (this.mode === 'battle') this.view.zoom = 18
+    }
+    if (this.width && this.height) this.placeCamera()
+  }
+
+  zoomCamera(ratio) {
+    const portrait = ['choose', 'inspect'].includes(this.mode)
+    this.view.zoom = T.MathUtils.clamp(this.view.zoom * ratio, portrait ? 1.8 : 8.2, portrait ? 5.8 : 26)
+    this.placeCamera()
+  }
+
+  panCamera(previous, current, anchor = this.worldPoint(previous)) {
+    const target = this.worldPoint(current)
+    if (!anchor || !target) return
+    this.view.x = T.MathUtils.clamp(this.view.x + anchor.x - target.x, -16, 16)
+    this.view.z = T.MathUtils.clamp(this.view.z + anchor.z - target.z, -12, 12)
     this.placeCamera()
   }
 
@@ -574,15 +633,57 @@ export class Stage {
     return point ? { x: point.x, z: point.z } : null
   }
 
-  hit(event) {
+  hit(event, nearby = false) {
     this.worldPoint(event)
-    const picked = this.ray.intersectObjects(this.actors.children, true).find(result => result.object.isMesh)
+    const candidates = [...this.units.values()].filter(unit => !unit.dead && !unit.ghost && unit.pivot.visible)
+    const picked = this.ray.intersectObjects(candidates.map(unit => unit.pivot), true).find(result => result.object.isMesh)
     let obj = picked?.object
     while (obj?.parent && obj.parent !== this.actors) obj = obj.parent
-    return obj ? [...this.units.values()].find(u => u.pivot === obj)?.id : null
+    if (obj) return candidates.find(u => u.pivot === obj)?.id
+    if (!nearby) return null
+    const bounds = this.canvas.getBoundingClientRect()
+    let closest = 25
+    let id = null
+    for (const unit of candidates) {
+      if (!this.callbacks.touchTarget?.(unit.id)) continue
+      const aim = this.project(unit.pivot.position, .64)
+      const gap = Math.hypot(aim.x + bounds.left - event.clientX, aim.y + bounds.top - event.clientY)
+      if (gap < closest) {
+        closest = gap
+        id = unit.id
+      }
+    }
+    return id
   }
 
   attach() {
+    const clear = () => {
+      this.pendingPointer = null
+      this.callbacks.hover(null)
+    }
+    const portrait = () => ['choose', 'inspect'].includes(this.mode)
+    this.touch = attachTouchControls(this.canvas, {
+      aims: () => this.callbacks.touchAim?.(),
+      preview: event => { if (this.mode === 'battle') this.pendingPointer = event },
+      clear,
+      pan: (prev, next) => {
+        if (portrait()) {
+          this.view.azimuth -= (next.clientX - prev.clientX) * .01
+          this.placeCamera()
+        } else this.panCamera(prev, next)
+      },
+      pinch: (prev, next, zoom, turn) => {
+        const anchor = portrait() ? null : this.worldPoint(prev)
+        this.view.azimuth += turn
+        this.zoomCamera(zoom)
+        if (anchor) this.panCamera(prev, next, anchor)
+      },
+      tap: event => {
+        if (this.mode !== 'battle') return
+        const where = this.worldPoint(event)
+        if (where) this.callbacks.click(where, this.callbacks.touchAim?.() ? null : this.hit(event, true))
+      },
+    })
     this.canvas.addEventListener('contextmenu', event => {
       if (event.button === 2 && !event.shiftKey) event.preventDefault()
     })
@@ -593,6 +694,7 @@ export class Stage {
       this.canvas.setPointerCapture(event.pointerId)
     })
     this.canvas.addEventListener('pointermove', event => {
+      if (event.pointerType === 'touch') return
       if (this.drag) {
         if (event.pointerId !== this.drag.pointerId) return
         const dx = event.clientX - this.drag.x
@@ -624,12 +726,11 @@ export class Stage {
     }
     this.canvas.addEventListener('pointercancel', release)
     this.canvas.addEventListener('lostpointercapture', release)
-    this.canvas.addEventListener('pointerleave', () => {
-      this.pendingPointer = null
-      this.clearHover()
-      this.callbacks.hover(null)
+    this.canvas.addEventListener('pointerleave', event => {
+      if (event.pointerType !== 'touch') clear()
     })
     this.canvas.addEventListener('click', event => {
+      if (this.touch.synthetic(event)) return
       if (this.mode === 'battle') {
         const point = this.worldPoint(event)
         if (point) this.callbacks.click(point, this.hit(event))
@@ -751,13 +852,26 @@ export class Stage {
 
   frame(now) {
     requestAnimationFrame(next => this.frame(next))
-    if (this.host.hidden || document.hidden) {
+    if (this.host.hidden || document.hidden || this.contextLost) {
       this.last = now
       return
     }
-    if (now - this.last < (this.software ? 48 : 14)) return
+    if (now - this.last < (this.software ? 48 : this.batterySaver ? 31 : 14)) return
     const dt = (now - this.last) / 1000
     this.last = now
+    if (this.touchLayout.matches && !this.software && !this.batterySaver && dt < .13) {
+      this.frameLoad += dt
+      this.frameSample++
+      if (this.frameSample === 90) {
+        const average = this.frameLoad / this.frameSample
+        const next = T.MathUtils.clamp(this.performanceScale + (average > .024 ? -.12 : average < .019 ? .06 : 0), .66, 1)
+        if (next !== this.performanceScale) {
+          this.performanceScale = next
+          this.layout()
+        }
+        this.frameLoad = this.frameSample = 0
+      }
+    }
     this.clock += dt
     if (this.pendingPointer) {
       const pointer = this.pendingPointer

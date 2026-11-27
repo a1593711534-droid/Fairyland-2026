@@ -1,4 +1,5 @@
 import './style.css'
+import './touch.css'
 import { version } from '../package.json'
 import { elements, hero, items, rules, skills, species, status, titleOf, waypoints, waypointTypes, xpForLevel } from './game/content.js'
 import { act, active, alliesInTurn, areaAttack, areOpponents, elementOf, evolve, forecast, healParty, isWild, meters,
@@ -20,6 +21,9 @@ const ui = document.querySelector('#ui')
 const tags = document.querySelector('#tags')
 const dialog = document.querySelector('#dialog')
 const toast = document.querySelector('#toast')
+const touchLayout = matchMedia('(any-pointer: coarse)')
+const stageHost = document.querySelector('#stage')
+const touchLayoutObserver = new ResizeObserver(positionTouchStage)
 let scene = 'menu'
 let game = null
 let modal = ''
@@ -62,6 +66,36 @@ function notify(message) {
 
 const sound = (type = 'tap', element) => audio.play(type, element)
 
+function positionTouchStage() {
+  if (!touchLayout.matches || !stage || stageHost.hidden) return
+  const appRect = app.getBoundingClientRect()
+  const top = ui.querySelector('.topbar')?.getBoundingClientRect()
+  const bottom = ui.querySelector('.touch-dock, .character-copy')?.getBoundingClientRect()
+  const head = top ? Math.max(0, Math.ceil(top.bottom - appRect.top) + 8) : 0
+  const foot = bottom ? Math.max(0, Math.ceil(appRect.bottom - bottom.top) + 8) : 0
+  app.style.setProperty('--stage-head', head + 'px')
+  app.style.setProperty('--stage-foot', foot + 'px')
+  stage.layout()
+}
+
+function observeTouchLayout() {
+  touchLayoutObserver.disconnect()
+  app.classList.toggle('touch-layout', touchLayout.matches)
+  app.dataset.scene = scene
+  if (!touchLayout.matches || scene === 'menu') return
+  for (const control of ui.querySelectorAll('.topbar, .touch-dock')) touchLayoutObserver.observe(control)
+  positionTouchStage()
+}
+
+function cameraTools() {
+  if (!touchLayout.matches) return ''
+  return '<div class="touch-camera" role="group" aria-label="鏡頭"><span>' +
+    (['choose', 'inspect'].includes(scene) ? '單指旋轉 · 雙指縮放' : '拖曳平移 · 雙指縮放與旋轉') + '</span>' +
+    button('−', 'camera-out', { title: '縮小鏡頭' }) +
+    button('+', 'camera-in', { title: '放大鏡頭' }) +
+    button('⌖', 'camera-reset', { title: '重設鏡頭' }) + '</div>'
+}
+
 function save() {
   if (game && !writeSlot('auto', game)) notify('瀏覽器無法儲存進度。')
 }
@@ -98,8 +132,11 @@ function setScene(next) {
   hoverRouter = null
   if (next !== 'menu' && !stage) {
     try {
-      stage = new Stage(document.querySelector('#stage'), {
+      stage = new Stage(stageHost, {
         frame: projectTags, click: stageClick, hover: stageHover, cancel: cancelInteraction,
+        touchAim: () => scene === 'battle' && !busy && !modal && (targetMode === 'summon' && Boolean(pendingSummon) ||
+          targetMode === 'skill' && Boolean(skills[skillFor(active(game.battle))].radius)),
+        touchTarget: id => !busy && !modal && touchCanTarget(unitById(game.battle, id)),
         error: () => notify('3D 資源載入失敗，請重新整理後再試。'),
       })
     } catch {
@@ -111,6 +148,7 @@ function setScene(next) {
   }
   if (stage) {
     stage.reduced = settings.reduced
+    stage.setBatterySaver(settings.batterySaver)
     stage.setMode(next)
   }
   if (next === 'choose') stage.bind('preview', 'hero', { x: .78, z: 0 }, { angle: -.14 })
@@ -154,7 +192,7 @@ function renderChoose() {
     '<p>' + hero.byline + '</p><dl class="character-stats"><div><dt>生命</dt><dd>' + hero.hp + '</dd></div><div><dt>魔力</dt><dd>' + rules.playerMana +
     '</dd></div><div><dt>移動</dt><dd>' + hero.move + ' m</dd></div></dl>' +
     '<p class="starter-elements" aria-label="起始夥伴含六種屬性">' + Object.keys(elements).map(key => sign(key)).join('') + '</p>' +
-    button('踏上旅程 <b>↗</b>', 'start', { css: 'primary large' }) + '</div></section>'
+    button('踏上旅程 <b>↗</b>', 'start', { css: 'primary large' }) + '</div>' + cameraTools() + '</section>'
 }
 
 function waypointAction(key) {
@@ -181,23 +219,28 @@ function renderWorld() {
     event: ['查看果籃', 'world-event'],
   }[type] ?? [mandatory ? '開始任務戰鬥' : '進入戰場', 'enter']
   if (seen) details = '你已查看過被風吹落的果籃。'
+  const touch = touchLayout.matches
+  const locationButtons = Object.entries(waypoints).map(([key, node]) => {
+    const move = waypointAction(key)
+    const icon = waypointTypes[node.revisit && !requiresBattle(game, key) ? 'battle' : node.type].icon
+    return [key, button('<span class="waypoint-icon">' + icon + '</span><span>' + node.name + '</span>', 'walk', {
+      css: key === worldPoint ? 'selected' : '', data: key, disabled: busy,
+      title: node.name + ' · ' + (move === 'shop' ? '購物' : move === 'world-event' ? '查看事件' :
+        move === 'heal' ? '休息' : move === 'enter' ? '開始戰鬥' : '前往'),
+    })]
+  })
   ui.innerHTML = '<section class="overlay world-screen"><header class="topbar">' + brand + '<div class="top-right">' +
     button('物品', 'world-kit', { css: 'subtle', disabled: busy }) +
     button('精靈手冊', 'collection', { css: 'subtle', disabled: busy }) + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
     button('選單', 'pause', { css: 'subtle' }) + '</div></header><div class="world-title"><div class="eyebrow"><i></i> 大地圖</div><h1>月見森林</h1></div>' +
-    '<aside class="world-card"><div class="eyebrow">' + waypointTypes[type].label + '</div><h2>' + stop.name + '</h2><p>' + details + '</p>' +
+    '<div class="world-dock' + (touch ? ' touch-dock' : '') + '"><aside class="world-card"><div class="eyebrow">' + waypointTypes[type].label + '</div><h2>' + stop.name + '</h2><p>' + details + '</p>' +
     button(action[0], action[1], { css: 'primary full', disabled: busy || Boolean(seen) || (action[1] === 'enter' && !game.hero.hp) }) + '</aside>' +
-    '<footer class="map-footer"><span>拖曳右鍵旋轉　／　滾輪縮放</span><span>' + goldLine(game.gold) + '　勝利 ' + game.wins + ' 場</span></footer></section>'
-  tags.innerHTML = Object.entries(waypoints).map(([key, node]) => {
-    const action = waypointAction(key)
-    return '<div class="tag waypoint" data-node="' + key + '">' +
-      button('<span class="waypoint-icon">' + waypointTypes[node.revisit && !requiresBattle(game, key) ? 'battle' : node.type].icon +
-        '</span><span>' + node.name + '</span>', 'walk', {
-          css: key === worldPoint ? 'selected' : '', data: key, disabled: busy,
-          title: node.name + ' · ' + (action === 'shop' ? '購物' : action === 'world-event' ? '查看事件' :
-            action === 'heal' ? '休息' : action === 'enter' ? '開始戰鬥' : '前往'),
-        }) + '</div>'
-  }).join('')
+    (touch ? '<nav class="waypoints-list" aria-label="地圖地點">' +
+      locationButtons.map(([, control]) => control).join('') + '</nav>' : '') + '</div>' +
+    '<footer class="map-footer"><span>拖曳右鍵旋轉　／　滾輪縮放</span><span>' + goldLine(game.gold) + '　勝利 ' + game.wins + ' 場</span></footer>' +
+    cameraTools() + '</section>'
+  tags.innerHTML = locationButtons.map(([key, control]) =>
+    '<div class="tag waypoint" data-node="' + key + '">' + control + '</div>').join('')
 }
 
 function card(actor) {
@@ -222,8 +265,11 @@ function renderBattle() {
   const group = alliesInTurn(b)
   const summonable = !actor.summoned && actor.kind === 'hero' &&
     availableSummons(game, actor).some(unit => actor.mana >= species[unit.kind].summon)
-  const action = (label, code, isDisabled = false, data = code) => button(label, code, {
-    css: 'action' + (targetMode === data ? ' selected' : ''), disabled: !canAct || isDisabled, data,
+  const touch = touchLayout.matches
+  app.classList.toggle('placing-summon', touch && targetMode === 'summon' && Boolean(pendingSummon))
+  const lastScroll = ui.querySelector('.initiative')?.scrollLeft ?? 0
+  const action = (label, code, isDisabled = false, data = code, css = '') => button(label, code, {
+    css: 'action ' + css + (targetMode === data ? ' selected' : ''), disabled: !canAct || isDisabled, data,
   })
   const spell = skills[skillFor(actor)]
   const combatBar = '<div class="combat-actions" role="group" aria-label="戰鬥指令">' +
@@ -233,24 +279,36 @@ function renderBattle() {
       action('收服', 'mode', !actor.action || actor.mana < rules.captureMana, 'capture') :
       action('撤回', 'recall')) +
     action('物品', 'battle-kit') + action('狀態', 'status') + action('脫離', 'disengage', !actor.action) +
-    action('衝刺', 'rush', !actor.action) + action('待機', 'end') +
-    (targetMode !== 'move' ? action('取消', 'cancel-target') :
+    action('衝刺', 'rush', !actor.action) + action('待機', 'end', false, 'end', 'wait-turn') +
+    (touch ? '' : targetMode !== 'move' ? action('取消', 'cancel-target') :
       moveHistory.length ? button('撤回移動', 'undo-move', { css: 'action move-back', disabled: busy && !walkingReversible,
         title: '撤回上一步移動（右鍵）' }) : '') + '</div>'
+  const summon = targetMode === 'summon' ? '<aside class="summon-dock" aria-label="召喚配置">' +
+    summonPanel(game, actor, placementPlan, sign, pendingSummon, touch) + '</aside>' : ''
+  const back = touch ? (targetMode !== 'move'
+    ? action(pendingSummon ? '取消落點' : '取消', 'cancel-target')
+    : button('↶ 復原移動', 'undo-move', { css: 'action move-back', disabled: !moveHistory.length || (busy && !walkingReversible) })) : ''
   ui.innerHTML = '<section class="overlay battle-screen"><header class="topbar"><div><div class="eyebrow">' + nodeName(b.map) +
     '</div><h2 class="round">第 ' + b.round + ' 回合</h2></div><div class="initiative" aria-label="先攻順序">' +
-    b.order.map(id => unitById(b, id)).filter(unit => unit.hp && !unit.dismissed)
-      .map(unit => button(sign(elementOf(unit), false) + '<span>' + titleOf(unit) + '</span>', 'select', {
+    b.order.map(id => unitById(b, id)).filter(unit => unit.hp && !unit.dismissed).map(unit => {
+      const selectable = touch && canAct && touchCanTarget(unit)
+      const odds = selectable ? targetPreview(unit) : ''
+      return button(sign(elementOf(unit), false) + '<span>' + titleOf(unit) +
+        (odds ? '<small>' + odds + '</small>' : '') + '</span>', selectable ? 'unit' : 'select', {
         css: 'initiative-unit ' + unit.team + (unit.id === actor.id ? ' current' : '') + (unit.done ? ' done' : ''),
-        data: unit.id, disabled: !canAct || !group.includes(unit),
-      })).join('') + '</div><div class="top-right">' + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
+        data: unit.id, disabled: !selectable && (!canAct || !group.includes(unit)),
+        title: odds ? '選取' + titleOf(unit) + ' · ' + odds : '',
+      })
+    }).join('') + '</div><div class="top-right">' + button('存檔', 'save', { css: 'subtle', disabled: busy }) +
       button('選單', 'pause', { css: 'subtle', disabled: busy }) + '</div></header>' +
     '<div class="battle-phase"><span class="live-dot"></span>' + (busy ? '行動結算中' : turnName(actor) + '回合') + '</div>' +
     '<div id="preview"></div><div class="combat-log" aria-live="polite">' +
     b.events.filter(event => event.type === 'text').slice(-3).map(event => '<div>' + event.text + '</div>').join('') + '</div>' +
-    '<footer class="battle-footer">' + card(actor) +
-    '<div class="battle-control">' + combatBar + '<div class="battle-caption">' + hint() + '</div></div>' +
-    '</footer></section>'
+    '<footer class="battle-footer' + (touch ? ' touch-dock' : '') + '">' + card(actor) +
+    '<div class="battle-control">' + (touch && summon ? summon : combatBar) +
+    '<div class="battle-guidance"><div class="battle-caption">' + hint() + '</div>' + back + '</div></div>' +
+    '</footer>' + cameraTools() + '</section>'
+  if (touch) ui.querySelector('.initiative').scrollLeft = lastScroll
   tags.innerHTML = settings.labels || ['attack', 'skill', 'capture'].includes(targetMode)
     ? b.units.filter(u => u.hp > 0 && !u.dismissed).map(u => {
       const selected = u.id === actor.id
@@ -261,18 +319,31 @@ function renderBattle() {
           '</span><span class="tiny-hp"><i style="width:' + (u.hp / stat(u, 'hp') * 100) + '%"></i></span>',
         'unit', { data: u.id, title: titleOf(u) + '，' + u.hp + ' 生命' + (shortStatus(u) ? '，' + shortStatus(u) : '') }) + '</div>'
     }).join('') : ''
-  if (targetMode === 'summon') tags.insertAdjacentHTML('beforeend', '<aside class="summon-dock" aria-label="召喚配置">' +
-    summonPanel(game, actor, placementPlan, sign, pendingSummon) + '</aside>')
+  if (summon && !touch) tags.insertAdjacentHTML('beforeend', summon)
 }
 
 function hint() {
   if (busy) return '行動結算中'
+  const touch = touchLayout.matches
+  if (touch && targetMode === 'move') return '點青色地面移動。點射程內的敵人普攻。金色路線會引發借機攻擊。'
+  if (touch && targetMode === 'summon') return pendingSummon
+    ? '點紫色空地配置。也可按住拖曳，鬆手放置。' : '選精靈，點空地配置。排好後按「召喚」。'
   if (targetMode === 'move') return moveHistory.length ? '短按右鍵可走回上一步，並退回那一步的移動距離。' :
     '點青色地面移動，點可命中的敵人普攻。金色路線會引發借機攻擊。'
   if (targetMode === 'summon') return pendingSummon ? '點藍紫色範圍內的空地。短按右鍵取消這次選擇。' : '選精靈、點落點。可一次配置多隻。'
-  if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) return '選擇法術中心。範圍內的我方也可能受到傷害。'
+  if (targetMode === 'skill' && skills[skillFor(active(game.battle))].radius) return touch
+    ? '點地面施放，或按住拖曳預覽後鬆手。範圍內的我方也可能受傷。' : '選擇法術中心。範圍內的我方也可能受到傷害。'
   if (targetMode === 'capture') return '選擇野生精靈。降低血量或施加異常可提高成功率。'
   return '點選目標確認攻擊。名稱旁顯示命中率或不可攻擊的原因。'
+}
+
+function touchCanTarget(unit) {
+  if (!unit || !['attack', 'skill', 'capture'].includes(targetMode)) return false
+  const actor = active(game.battle)
+  if (!areOpponents(actor, unit)) return false
+  if (targetMode === 'capture') return validate(game, { type: 'capture', target: unit.id }).ok
+  const skill = targetMode === 'skill' ? skillFor(actor) : 'attack'
+  return validate(game, { type: 'strike', target: unit.id, at: unit.pos, skill }).ok
 }
 
 function targetPreview(unit) {
@@ -304,16 +375,18 @@ function renderInspect() {
     (next ? button('進化為' + species[unit.kind].evolved, 'evolve', { css: 'primary large', disabled: busy }) : '') +
     button('物品欄', 'inspect-kit', { css: 'subtle', disabled: busy }) +
     (game.collection.length > 1 ? button('‹', 'inspect-shift', { css: 'subtle', data: '-1', title: '上一隻精靈' }) +
-      button('›', 'inspect-shift', { css: 'subtle', data: '1', title: '下一隻精靈' }) : '') + '</div></div></section>'
+      button('›', 'inspect-shift', { css: 'subtle', data: '1', title: '下一隻精靈' }) : '') + '</div></div>' + cameraTools() + '</section>'
 }
 
 function render() {
   document.body.classList.toggle('reduced', settings.reduced)
+  if (scene !== 'battle') app.classList.remove('placing-summon')
   if (scene === 'menu') renderMenu()
   if (scene === 'choose') renderChoose()
   if (scene === 'world') renderWorld()
   if (scene === 'battle') renderBattle()
   if (scene === 'inspect') renderInspect()
+  observeTouchLayout()
   renderModal()
   refreshMarks()
 }
@@ -329,7 +402,8 @@ function renderModal() {
     body = '<label class="setting"><span>音效音量</span><input type="range" id="volume" min="0" max="1" step=".05" value="' +
       settings.volume + '"></label><label class="setting"><span>背景音樂</span><input type="range" id="music" min="0" max="1" step=".05" value="' +
       settings.music + '"></label><label class="setting"><span>簡化動畫與特效</span><input type="checkbox" id="reduced"' +
-      (settings.reduced ? ' checked' : '') + '></label><label class="setting"><span>顯示戰場名稱</span><input type="checkbox" id="labels"' +
+      (settings.reduced ? ' checked' : '') + '></label><label class="setting"><span>省電模式（30 FPS）</span><input type="checkbox" id="batterySaver"' +
+      (settings.batterySaver ? ' checked' : '') + '></label><label class="setting"><span>顯示戰場名稱</span><input type="checkbox" id="labels"' +
       (settings.labels ? ' checked' : '') + '></label>'
   }
   if (modal === 'help') {
@@ -338,7 +412,9 @@ function renderModal() {
       '<h3>召喚與收服</h3><p>莉歐開局就有六種屬性的夥伴，進場時會獨自站在戰場上。她可在同一回合耗魔召喚多隻夥伴。魔力低於 ' + rules.tetherMana +
       ' 時，場上夥伴會變回野生。野生精靈生命愈低、異常愈多，收服機率愈高。回到月泉可回復生命與魔力。</p>' +
       '<h3>屬性與進化</h3><p>水克火、火克冰、冰克風、風克地、地克雷、雷克水。同屬性施法有加成，莉歐召喚火屬性精靈也有加成。召喚上場的夥伴可獲經驗，Lv. ' +
-      rules.evolutionLevel + ' 可從手冊進化。</p><p>短按右鍵取消，拖曳右鍵旋轉。<kbd>Esc</kbd> 返回或開啟選單　<kbd>Space</kbd> 待機　<kbd>Enter</kbd> 提交召喚</p></div>'
+      rules.evolutionLevel + ' 可從手冊進化。</p>' + (touchLayout.matches
+        ? '<h3>觸控操作</h3><p>點一下即可移動或選擇目標。單指拖曳平移鏡頭，雙指可平移、縮放與轉動。配置召喚落點或瞄準範圍法術時，按住拖曳可預覽，鬆手即可落點或施放。用雙指中止瞄準並移動鏡頭，或按畫面上的取消。安全移動可按「復原移動」。</p>'
+        : '<p>短按右鍵取消，拖曳右鍵旋轉。<kbd>Esc</kbd> 返回或開啟選單　<kbd>Space</kbd> 待機　<kbd>Enter</kbd> 提交召喚</p>') + '</div>'
   }
   if (modal === 'save' || modal === 'load') {
     const loading = modal === 'load'
@@ -446,8 +522,16 @@ function projectTags(renderer) {
     const node = waypoints[tag.dataset.node]
     if (!pivot && !node) continue
     const at = renderer.project(pivot ?? node, node ? .38 : u.kind === 'hero' || u.kind === 'rival' ? 2.65 : u.evolved ? 2.85 : 2.05)
-    tag.style.transform = 'translate(' + at.x.toFixed(1) + 'px,' + at.y.toFixed(1) + 'px) translate(-50%,-100%)'
-    tag.style.visibility = at.show && body?.visible !== false ? 'visible' : 'hidden'
+    const visible = at.show && body?.visible !== false && (!touchLayout.matches ||
+      (at.y >= 48 && at.y <= renderer.height && at.x >= 43 && at.x <= renderer.width - 43))
+    const x = at.x + (renderer.offset?.x ?? 0)
+    const y = at.y + (renderer.offset?.y ?? 0)
+    if (visible) {
+      const transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) translate(-50%,-100%)'
+      if (tag.style.transform !== transform) tag.style.transform = transform
+    }
+    const visibility = visible ? 'visible' : 'hidden'
+    if (tag.style.visibility !== visibility) tag.style.visibility = visibility
   }
 }
 
@@ -481,6 +565,8 @@ function stageHover(pos) {
   if (!pos) {
     const label = document.querySelector('#preview')
     if (label) label.textContent = ''
+    const caption = document.querySelector('.battle-caption')
+    if (caption && game?.battle) caption.textContent = hint()
     stage?.clearHover()
     return
   }
@@ -523,8 +609,8 @@ function stageHover(pos) {
   const label = document.querySelector('#preview')
   const projected = stage.project(pos, .14)
   if (label) {
-    label.style.left = projected.x + 'px'
-    label.style.top = projected.y + 'px'
+    label.style.left = projected.x + stage.offset.x + 'px'
+    label.style.top = projected.y + stage.offset.y + 'px'
     label.textContent = path
       ? meters(path.cost) + (risk ? ' · 借機攻擊' : '') + (within ? '' : ' · 距離不足')
       : '無法抵達'
@@ -879,6 +965,9 @@ app.addEventListener('click', event => {
     dialog.querySelector('button, input')?.focus()
   }
   if (code === 'close') cancelInteraction()
+  if (code === 'camera-out') stage.zoomCamera(1.24)
+  if (code === 'camera-in') stage.zoomCamera(1 / 1.24)
+  if (code === 'camera-reset') stage.resetCamera()
   if (code === 'sound') {
     settings.volume = settings.volume ? 0 : .45
     writeSettings(settings)
@@ -968,10 +1057,11 @@ dialog.addEventListener('input', event => {
   if (!(input instanceof HTMLInputElement)) return
   settings[input.id] = input.type === 'checkbox' ? input.checked : Number(input.value)
   if (stage) stage.reduced = settings.reduced
+  if (stage && input.id === 'batterySaver') stage.setBatterySaver(settings.batterySaver)
   writeSettings(settings)
   audio.configure(settings.volume, settings.music)
   if (!['volume', 'music'].includes(input.id)) {
-    if (scene === 'battle') renderBattle()
+    if (scene === 'battle') { renderBattle(); observeTouchLayout() }
     document.body.classList.toggle('reduced', settings.reduced)
   }
 })
@@ -1002,4 +1092,6 @@ dialog.addEventListener('click', event => {
   if (event.target.classList.contains('modal-shade')) cancelInteraction()
 })
 
+touchLayout.addEventListener('change', render)
+window.addEventListener('resize', positionTouchStage)
 render()

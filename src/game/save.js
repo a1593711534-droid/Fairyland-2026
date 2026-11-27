@@ -3,7 +3,7 @@ import { inventory, startingInventory } from './inventory.js'
 
 export const slots = ['auto', '1', '2', '3']
 const prefix = 'fairyland-2026.'
-export const defaults = { reduced: false, labels: true, volume: .45, music: .55 }
+export const defaults = { reduced: false, labels: true, batterySaver: false, volume: .45, music: .55 }
 const saveVersion = 3
 
 function starterCollection() {

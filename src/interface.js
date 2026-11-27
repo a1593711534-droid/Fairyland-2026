@@ -8,7 +8,7 @@ export function button(name, code, { css = '', data = '', disabled = false, titl
 
 export const goldLine = gold => '<span class="gold">◈ ' + gold + ' 金幣</span>'
 
-export function summonPanel(game, actor, plan, sign, pending) {
+export function summonPanel(game, actor, plan, sign, pending, touch = false) {
   const spent = plan.reduce((sum, entry) => sum + species[game.collection.find(u => u.id === entry.id).kind].summon, 0)
   const budget = actor.mana - spent
   const rows = availableSummons(game, actor).map(unit => {
@@ -24,7 +24,8 @@ export function summonPanel(game, actor, plan, sign, pending) {
   return '<div class="plan-summary"><strong>已配置 ' + plan.length + ' 隻</strong><span>消耗 ' + spent + '　剩餘 ' + budget + ' MP</span></div>' +
     (budget < rules.tetherMana && plan.length ? '<p class="plan-warning">魔力將低於 ' + rules.tetherMana + '，場上夥伴會脫離掌控。</p>' : '') +
     '<div class="inventory-rows">' + (rows || '<p class="muted">沒有可召喚的精靈。</p>') + '</div>' +
-    button('召喚 ' + plan.length + ' 隻', 'confirm-summons', { css: 'primary full', disabled: !plan.length, title: '提交召喚（Enter）' })
+    button('召喚 ' + plan.length + ' 隻', 'confirm-summons', { css: 'primary full', disabled: !plan.length,
+      title: touch ? '召喚 ' + plan.length + ' 隻' : '提交召喚（Enter）' })
 }
 
 export function kitPanel(unit, { battle = false, problem }) {
