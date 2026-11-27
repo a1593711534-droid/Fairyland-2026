@@ -16,6 +16,7 @@ CLIPS = {
 TURN_FRAMES = {'dog': 23, 'cat': 24, 'turtle': 40, 'dino': 31, 'bird': 22, 'mouse': 19, 'hero': 26}
 THREAT_FRAMES = {'dog': 48, 'cat': 45, 'turtle': 48, 'dino': 53, 'bird': 43, 'mouse': 39}
 TURN_ANGLE = math.tau/6
+REAR_LOOK = {'bird': 49, 'dino': 64}
 UP = Vector((0,0,1))
 
 
@@ -219,6 +220,25 @@ def alert_reaction(bones, species, clip, t):
             translate(head,y=-.079*hold)
 
 
+def rear_look(bones, species, sign, t):
+    """Lead with the head, coil the neck and look back with the feet planted."""
+    head, neck, tail = (bones[key] for key in ('Head','Neck','Tail'))
+    head_turn = window(.03,.34,.72,.96,t)
+    neck_turn = window(.13,.40,.67,.92,t)
+    inspect = window(.43,.52,.64,.73,t)
+    head_sweep = 1.94 if species=='bird' else 1.77
+    bend(head, -.12*head_turn+.09*inspect, sign*head_sweep*head_turn, -.09*sign*inspect)
+    bend(neck, -.17*neck_turn, sign*(math.pi-head_sweep)*neck_turn)
+    translate(neck,z=(.088 if species=='bird' else .192)*neck_turn)
+    bend(tail,-.09*neck_turn,z=-.11*sign*neck_turn)
+    if species=='bird':
+        # Open the inside wing along the turn so the crest and feathers clear.
+        side = 'R' if sign>0 else 'L'
+        bend(bones['Front'+side],.14*neck_turn,z=sign*.21*neck_turn)
+    else:
+        bend(bones['Jaw'],.09*inspect)
+
+
 def pose(rig, species, clip, t):
     bones = rig.pose.bones
     for bone in bones:
@@ -228,6 +248,9 @@ def pose(rig, species, clip, t):
         bone.scale = (1,1,1)
 
     body, head, tail = (bones[key] for key in ('Body','Head','Tail'))
+    if clip.startswith('guard_look_back_'):
+        rear_look(bones,species,1 if clip.endswith('_right') else -1,t)
+        return
     if clip.startswith('turn_'):
         turn_pose(bones,species,1 if clip.endswith('_right') else -1,t,
                   clip.startswith('turn_rear'),clip.startswith('turn_pivot'))
@@ -277,8 +300,8 @@ def pose(rig, species, clip, t):
         elif clip == 'idle_groom':
             prep = window(.06,.22,.69,.94,t)
             groom = window(.26,.36,.61,.70,t)
-            grounding(bones,prep,-.29,.17,.038,-.14,-.18,.69*prep)
-            bend(head,.45*prep+.085*groom*math.sin(t*math.tau*6),-.20*prep,-.21*prep)
+            grounding(bones,prep,-.24,.135,.035,-.12,-.21,.43*prep)
+            bend(head,.31*prep+.061*groom*math.sin(t*math.tau*6),-.19*prep,-.22*prep)
             bend(tail,.12*prep,z=.16*groom)
         elif clip == 'idle_tail':
             curl = window(.10,.29,.72,.94,t)
@@ -293,7 +316,7 @@ def pose(rig, species, clip, t):
     elif species == 'turtle':
         if clip == 'idle_retreat':
             tuck = window(.09,.26,.64,.97,t)
-            translate(head,y=.225*tuck,z=-.043*tuck)
+            translate(head,y=.145*tuck,z=-.072*tuck)
             bend(head,.082*tuck)
             bend(tail,.24*tuck)
         elif clip == 'idle_browse':
@@ -304,8 +327,9 @@ def pose(rig, species, clip, t):
         if clip == 'idle_preens':
             preen = window(.10,.29,.67,.93,t)
             peck = window(.31,.39,.61,.69,t)*math.sin(t*math.tau*7)
-            bend(head,.43*preen+.055*peck,-.17*preen,.78*preen)
-            bend(bones['FrontR'],.17*preen,z=.14*preen)
+            bend(head,.24*preen+.038*peck,.54*preen,.32*preen)
+            bend(bones['Neck'], -.10*preen,.25*preen)
+            bend(bones['FrontR'],.11*preen,z=.27*preen)
         elif clip == 'idle_wings':
             wing = window(.12,.32,.68,.93,t)
             flutter = window(.22,.36,.61,.74,t)*math.sin(t*math.tau*4.75)

@@ -131,13 +131,15 @@ export class Vigilance {
         state.step = step
         state.fast = urgent || yaw > 1.45
         reaction = urgent ? 'brace' : 'listen'
-      } else if (multi && this.sample() > .48) {
+      } else if (multi && this.sample() > .68) {
         state.ticket = ++this.serial
         reaction = 'settle'
       }
       this.observations.get(focus.id).seen = now
+      const pause = this.sample()
+      const calmWindow = !sudden && !hit && pause > .68 ? 1.7 + this.sample() * 1.5 : 0
       state.next = now + (reaction === 'brace' ? .96 : reaction === 'listen' ? .68 : .85) * tempo[this.kind] +
-        this.sample() ** 2 * (mode === 'provoked' ? 2.25 : 2.9)
+        pause ** 2 * (mode === 'provoked' ? 2.25 : 2.9) + calmWindow
       state.hit = null
     }
     if (!multi && !main.attack && now >= state.nextScan) {

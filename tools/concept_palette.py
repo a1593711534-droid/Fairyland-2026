@@ -89,3 +89,27 @@ class OrthographicPalette:
         amount = min(.54, .265*self.strength*total)
         return tuple(tint[i]*(1-amount)+amount*((front[i]*front_weight if front else 0) +
             (side[i]*side_weight if side else 0))/total for i in range(3))
+
+
+class LioPalette:
+    """Project broad cheek and nose tones from Lio's front reference."""
+    height = ((2.064,132),(2.105,108),(2.164,93),(2.233,75),(2.285,61),(2.39,45))
+
+    def __init__(self):
+        sheet = bpy.data.images.load(str(ART/'lio-turnaround.webp'),check_existing=True)
+        self.width,self.rows = sheet.size
+        self.colors = array('f',[0]) * (self.width*self.rows*4)
+        sheet.pixels.foreach_get(self.colors)
+
+    def paint(self, tint, point, normal):
+        if normal.y > -.15 or not 2.08 < point.z < 2.38 or abs(point.x) > .121:
+            return tint
+        col = int(303 + point.x*301)
+        row = self.rows-1-int(line(self.height,point.z))
+        index = 4*(row*self.width+col)
+        r,g,b = self.colors[index:index+3]
+        if r-g < .08 or g-b < .029 or r < .44:
+            return tint
+        strength = .50 * abs(normal.y)**.82 * (1-(abs(point.x)/.122)**4)
+        paint = (linear(r),linear(g),linear(b))
+        return tuple(tint[i]*(1-strength) + paint[i]*strength for i in range(3))

@@ -478,8 +478,9 @@ export class Stage {
 
     const notice = unit.notice
     const focus = unit.focus
+    const rearLook = current?.startsWith('guard_look_back_')
     const alertPose = current?.startsWith('guard') || current?.startsWith('threat_display')
-    const looking = !this.reduced && unit.idle && !unit.travel && (focus || notice && this.clock >= notice.start &&
+    const looking = !rearLook && !this.reduced && unit.idle && !unit.travel && (focus || notice && this.clock >= notice.start &&
       this.clock < notice.end) && (current?.startsWith('idle') || alertPose || turning)
     let gaze = 0
     let shoulder = 0
@@ -561,7 +562,20 @@ export class Stage {
     if (!unit.idle || unit.travel) return
     if (focus) {
       if (!resting || current.startsWith('threat_display')) return
-      if (focus.display && Math.abs(angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, focus.point))) < .75 &&
+      if (current.startsWith('guard_look_back_')) {
+        if (focus.fast && unit.rearLookTicket !== focus.ticket) this.play(unit.id, watch, false)
+        return
+      }
+      const direction = angularDifference(unit.pivot.rotation.y, bearing(unit.pivot.position, focus.point))
+      const glance = 'guard_look_back_' + (direction > 0 ? 'right' : 'left')
+      if (!focus.step && !focus.display && Math.abs(direction) > 2.44 && unit.actions.has(glance) &&
+          focus.ticket !== unit.rearLookTicket && this.clock > (unit.rearLookAt ?? 0)) {
+        unit.rearLookTicket = unit.reactionTicket = focus.ticket
+        unit.rearLookAt = this.clock + 2.4 + unit.idle.sample() * 3.1
+        this.play(unit.id, glance, true, false, .84 + unit.idle.sample() * .33)
+        return
+      }
+      if (focus.display && Math.abs(direction) < .75 &&
           unit.actions.has('threat_display')) {
         unit.vigilance.consumeDisplay(focus.id)
         focus.display = false

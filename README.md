@@ -38,3 +38,4 @@
 - 現行六屬演出由 `src/render/elemental-effects.js` 繪製，火屬召喚另外使用 `src/render/fire-summon.js`，兩者共用可重複取樣的流場紋理。較早的 Effekseer 檔案可用 `python tools/author-effects.py /path/to/Effekseer` 重建，授權見 [Effekseer 授權](public/art/fx/effekseer-LICENSE.txt)。
 - `tools/idle_behaviors.py` 製作各物種的待機姿態和踏步轉身，`src/render/attention.js` 依位置與視線選擇注視方向。夥伴、移動、施法和命中都能改變注意力，再由物種的反應速度與姿態決定什麼時候轉頭或踏步轉向。
 - 我方召喚精靈與野生精靈會追蹤可見的威脅。靠近、橫移和命中會改變注意力，精靈可維持注視、側耳、戒備或放鬆半步。較遠的背後威脅以肩頸回看，急迫的威脅可用單次快速轉身直接朝向目標。受擊後會優先看向出手者，並保留其他攻擊者的記憶。仇恨用於注視和姿態演出。
+- 鳥系和龍系有專用的左右後看動畫。背後較遠的威脅可引發頭與頸依序扭轉，腳留在原位。威脅沒有移動時，較長的觀察停頓也會出現。快速接近或受擊仍可觸發立即的注意力變化。

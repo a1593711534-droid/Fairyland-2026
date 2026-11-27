@@ -13,8 +13,8 @@ from mathutils import Vector, noise
 from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from idle_behaviors import CLIPS, THREAT_FRAMES, TURN_FRAMES, pose as idle_pose
-from concept_palette import OrthographicPalette
+from idle_behaviors import CLIPS, REAR_LOOK, THREAT_FRAMES, TURN_FRAMES, pose as idle_pose
+from concept_palette import LioPalette, OrthographicPalette
 
 OUT = Path(__file__).resolve().parents[1] / '.art-cache'
 OUT.mkdir(parents=True, exist_ok=True)
@@ -256,7 +256,7 @@ EYE_STYLES = {
     'bird':   (.182,.189,.08,.07,1.60,1.59,1.43,.64,(.60,.244,.705),(.172,.084,.241)),
     'mouse':  (.210,.194,.11,.06,.93,1.01,1.45,.16,(.295,.147,.080),(.169,.094,.087)),
     'dog':    (.244,.135,.02,.27,1.65,1.37,1.64,.83,(.19,.53,.88),(.52,.60,.66)),
-    'hero':   (.0,.0,.0,.31,2.16,1.74,2.0,.82,(.34,.19,.068),(.61,.57,.50)),
+    'hero':   (.0,.0,.0,.40,1.98,1.62,1.74,.81,(.35,.23,.104),(.39,.36,.30)),
 }
 
 
@@ -288,9 +288,9 @@ def inset_eye(surface, frame, shell, skin_color, species):
             color = blend(color,(.62,.48,.27),rays*.17*(1-rim))
             color = blend((.006,.009,.014),color,soft(.51,.69,pupil_r))
             color = blend(color,white,soft(.80,.99,iris_r))
-            shade = .74 if species=='turtle' else .45
+            shade = .74 if species=='turtle' else .61 if species=='hero' else .45
             color = [c*(1-soft(.19,.94,v)*shade) for c in color]
-            gloss = .17 if species=='mouse' else .096
+            gloss = .17 if species=='mouse' else .063 if species=='hero' else .096
             shine = exp(-((u+.30)/gloss)**2-((v-.38)/(gloss*1.2))**2)
             pin = exp(-((u-.32)/.061)**2-((v+.28)/.104)**2)
             color = blend(color,(.87,.96,1),max(shine,pin*.45))
@@ -536,7 +536,11 @@ def skeleton(name, height, hind_y, front_y, span, bird=False, person=False, anat
     chest = anatomy[0] if anatomy else height * (.52 if not person else .60)
     bone('Body', (0, 0, chest), (0, 0, chest+.35))
     heady,headz = (.023,2.064) if person else (anatomy[1]+.10,anatomy[2]-.105)
-    bone('Head', (0,heady,headz), (0,heady,headz+.28), 'Body')
+    neck = name in REAR_LOOK
+    if neck:
+        necky,neckz = (heady+.17, chest+.18)
+        bone('Neck',(0,necky,neckz),(0,necky,neckz+.28),'Body')
+    bone('Head', (0,heady,headz), (0,heady,headz+.28), 'Neck' if neck else 'Body')
     if name in ('dino','bird'):
         bone('Jaw',(0,heady-.22,headz+.033),(0,heady-.48,headz-.007),'Head')
     bone('Tail', (0, .58, chest*.93), (0, 1.12, chest), 'Body')
@@ -580,6 +584,8 @@ def animate(rig, style):
     specs.update({name: (TURN_FRAMES[style], False) for name in ('turn_left','turn_right')})
     duration = {'hero':21,'turtle':24,'dog':17,'cat':16,'dino':22,'bird':13,'mouse':12}[style]
     specs.update({name: (duration, False) for name in ('turn_pivot_left','turn_pivot_right')})
+    if style in REAR_LOOK:
+        specs.update({name: (REAR_LOOK[style],False) for name in ('guard_look_back_left','guard_look_back_right')})
     if style in THREAT_FRAMES:
         specs.update({'guard': (90, True), 'guard_alert': (61, True),
                       'threat_display': (THREAT_FRAMES[style], False),
@@ -641,8 +647,10 @@ def animate(rig, style):
                     if name == 'Head':
                         rotation[0] = (.32 if clip == 'attack' else -.24)*strike
                     if name.startswith('Front'):
-                        rotation[0] = (-.92 if person else -.61)*beat*(1 if name.endswith('R') or clip != 'attack' else .45)
-                        rotation[2] = .34*side*beat if clip != 'attack' else .09*beat
+                        swing = -.92 if person else -.36 if style in ('bird','dino','mouse') else -.61
+                        rotation[0] = swing*beat*(1 if name.endswith('R') or clip != 'attack' else .45)
+                        spread = .34 if clip != 'attack' else .09
+                        rotation[2] = (max(.22,spread) if bird else spread)*side*beat
                     if name == 'Tail':
                         rotation[0] = .49*beat
                 if clip == 'hit':
@@ -1123,12 +1131,13 @@ def animal(kind, evolved):
         elif kind=='turtle' and v.y<heady+.28 and v.z>headz-headw*.70:
             bone = 'Head'
             strength = 1-soft(heady-.095,heady+.26,v.y)
+        elif kind in REAR_LOOK and v.y < heady+.36 and v.z > chest+.04:
+            neck = (1-soft(heady+.14,heady+.36,v.y))*soft(chest+.04,headz-.12,v.z)
+            head = max(soft(headz-.18,headz+.012,v.z), (1-soft(heady-.27,heady-.085,v.y))*soft(headz-.24,headz-.115,v.z))
+            return [('Head',neck*head), ('Neck',neck*(1-head)), ('Body',1-neck)]
         elif v.y < heady+.16 and v.z > headz-headw*.5:
             bone = 'Head'
             strength = min(1, max(0,(heady+.16-v.y)*4+(v.z-headz)*2.3+.3))
-        elif kind == 'bird' and v.z>chest*.64 and abs(v.x)>.22:
-            bone = 'FrontR' if v.x>0 else 'FrontL'
-            strength = soft(.24,.53,abs(v.x))
         elif kind=='dino' and v.z<chest+.16 and v.y<-.35 and abs(v.x)>span*.42:
             bone = 'FrontR' if v.x>0 else 'FrontL'
             strength = soft(.18,.283,abs(v.x))*soft(.29,.55,-v.y)
@@ -1208,7 +1217,7 @@ def person():
     trousers = material('Midnight wool slate trousers', '4c423d', .87)
     cloak = material('Russet velvet', '703936',.81)
     gold = material('Antique brass', 'a77d4b', .50, .31)
-    skinmat = material('Wheat complexion', 'daae8a')
+    skinmat = material('Wheat complexion', 'c58e71', .81)
     hair = material('Chestnut hair', '54362a', .53)
     boot = material('Oiled leather', '4a362e')
     belt = material('Oiled leather russet belt', '78523a')
@@ -1340,24 +1349,46 @@ def person():
     base=Path(__file__).with_name('reference')/'lio-head.obj'
     face=read_obj(base,'Lio MPFB facial anatomy',skinmat,
         lambda v:(v[0]*2.03, (v[1]+.030)*1.83+.018, 1.923+(v[2]-1.3444258)*.56/.2540483))
-    frames = [(side*.066,2.231,.038,.017,side*.135) for side in (-1,1)]
-    carve_sockets(face,frames,.016)
+    for vert in face.data.vertices:
+        x,y,z = vert.co
+        front = soft(.034,.161,-y)
+        jaw = exp(-((z-2.077)/.066)**2)*front
+        cheek = exp(-((z-2.193)/.036)**2)*front
+        bridge = exp(-(x/.031)**2-((z-2.204)/.061)**2)*front
+        philtrum = exp(-(x/.041)**2-((z-2.125)/.018)**2)*front
+        vert.co=(x*(1-.14*jaw+.071*cheek),y-.025*bridge+.011*philtrum,z+.008*jaw)
+    face.data.update()
+    frames = [(side*.062,2.228,.039,.017,side*.10) for side in (-1,1)]
+    carve_sockets(face,frames,.015)
     def complexion(v):
         cheek=exp(-((abs(v.x)-.100)/.052)**2-((v.z-2.168)/.057)**2)*soft(.095,.159,-v.y)
         lip=exp(-(v.x/.057)**4-((v.z-2.107)/.017)**2)*soft(.140,.183,-v.y)
         lip_seam=exp(-(v.x/.045)**4-((v.z-2.106)/.006)**2)*soft(.146,.179,-v.y)
-        brow_shape = 2.278-.051*abs(abs(v.x)-.069)
-        brow = exp(-((abs(v.x)-.069)/.046)**6-((v.z-brow_shape)/.008)**2)
+        t = (abs(v.x)-.027)/.088
+        brow_shape = 2.270+.021*math.sin(math.pi*t)-.007*t
+        brow = exp(-((abs(v.x)-.070)/.043)**8-((v.z-brow_shape)/(.009-.003*soft(.55,1,t)))**2)
         brow *= soft(.079,.132,-v.y)
-        warmth = blend(skinmat.diffuse_color[:3],(.55,.132,.115),lip*.56)
+        warmth = blend(skinmat.diffuse_color[:3],(.33,.088,.065),lip*.59)
         warmth = blend(warmth,(.19,.058,.044),lip_seam*.55)
         warmth = blend(warmth,(.65,.266,.175),cheek*.32)
         return blend(warmth,(.095,.040,.033),brow*.84)
-    pigment(face,skinmat,complexion)
+    pigment(face,skinmat,complexion,LioPalette())
     fix(face,'Head')
     surface = face_surface(face)
     for frame in frames:
         fix(inset_eye(surface,frame,cornea,complexion,'hero'),'Head')
+    brows = material('Warm chestnut brow hairs','58362a',.82)
+    for sign in (-1,1):
+        trace = []
+        for i in range(15):
+            t=i/14
+            x=sign*(.027+.088*t)
+            z=2.270+.021*math.sin(math.pi*t)-.007*t
+            contact,_,_,_=surface.ray_cast((x,-4,z),(0,1,0))
+            if contact is not None:
+                trace.append(((x,contact.y-.0015,z),.0034*(1-.76*t*t),.0042*(1-.80*t*t)))
+        if len(trace)>2:
+            tube('Tapered arched eyebrow',trace,brows,'Head',9)
     ell('Scalp hair mass',(.003,.047,2.36),(.166,.162,.164),hair,'Head',-.08)
     for side in (-1,1):
         for j in range(6):

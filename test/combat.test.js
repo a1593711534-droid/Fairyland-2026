@@ -356,6 +356,10 @@ test('all twelve Blender forms and the hero provide exported action clips', asyn
         'guard_react_listen', 'guard_react_brace', 'guard_react_settle')
       assert.ok(root.animations.find(action => action.name === 'threat_display').channels.length >= 4)
     }
+    if (/^(bird|dino)(-|$)/.test(file)) {
+      actions.push('guard_look_back_left','guard_look_back_right')
+      assert.ok(root.nodes.some(node => node.name === 'Neck'))
+    }
     assert.deepEqual(all.filter(name => !name.startsWith('idle_')).sort(), actions.sort())
     const sequence = idleSequence(file, 'inspection', true)
     for (let i = 0; i < 14; i++) {
